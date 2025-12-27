@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "fusion360": {
+      "command": "node",
+      "args": ["/Users/peytoncas/Documents/modeling/fusion-mcp-server/dist/index.js"]
+    }
+  }
+}

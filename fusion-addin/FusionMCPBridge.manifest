@@ -1,0 +1,15 @@
+{
+    "autodeskProduct": "Fusion",
+    "type": "addin",
+    "id": "FusionMCPBridge",
+    "author": "Cursor + Claude",
+    "description": {
+        "": "MCP Bridge for AI-assisted modeling in Fusion 360"
+    },
+    "version": "0.1.0",
+    "runOnStartup": false,
+    "supportedOS": "windows|mac",
+    "editEnabled": true
+}
+
+
