@@ -244,21 +244,34 @@ def handle_list_planes(body):
 
 def handle_create_offset_plane(body):
     root = get_root()
-    planes = root.constructionPlanes
-    plane_input = planes.createInput()
     
     base_plane_id = body.get("base_plane", "xy")
     offset = body.get("offset", 10)
+    component_name = body.get("component")  # Optional: target component
     
-    # Get base plane
-    if base_plane_id == "xy":
-        base = root.xYConstructionPlane
-    elif base_plane_id == "xz":
-        base = root.xZConstructionPlane
-    elif base_plane_id == "yz":
-        base = root.yZConstructionPlane
+    # Determine which component to create the plane in
+    if component_name:
+        target_component, target_occ = get_component_by_name(component_name)
+        if not target_component:
+            raise Exception(f"Component not found: {component_name}")
     else:
-        base = root.constructionPlanes.itemByName(base_plane_id)
+        target_component = root
+    
+    planes = target_component.constructionPlanes
+    plane_input = planes.createInput()
+    
+    # Get base plane from target component
+    if base_plane_id == "xy":
+        base = target_component.xYConstructionPlane
+    elif base_plane_id == "xz":
+        base = target_component.xZConstructionPlane
+    elif base_plane_id == "yz":
+        base = target_component.yZConstructionPlane
+    else:
+        # Try target component first, then root
+        base = target_component.constructionPlanes.itemByName(base_plane_id)
+        if not base:
+            base = root.constructionPlanes.itemByName(base_plane_id)
     
     if not base:
         raise Exception(f"Plane not found: {base_plane_id}")
@@ -278,22 +291,51 @@ def handle_create_offset_plane(body):
 # SKETCH OPERATIONS
 # ============================================================================
 
+def get_component_by_name(name):
+    """Get a component by name (e.g., 'Carcass' or 'Carcass:1')."""
+    root = get_root()
+    
+    # Strip occurrence index if present (e.g., "Carcass:1" -> "Carcass")
+    base_name = name.split(":")[0] if ":" in name else name
+    
+    # Check all occurrences
+    for occ in root.allOccurrences:
+        if occ.component.name == base_name or occ.name == name:
+            return occ.component, occ
+    
+    return None, None
+
+
 def handle_create_sketch(body):
     root = get_root()
-    sketches = root.sketches
     
     plane_id = body.get("plane", "xy")
     name = body.get("name")
+    component_name = body.get("component")  # Optional: target component
     
-    # Get plane
-    if plane_id == "xy":
-        plane = root.xYConstructionPlane
-    elif plane_id == "xz":
-        plane = root.xZConstructionPlane
-    elif plane_id == "yz":
-        plane = root.yZConstructionPlane
+    # Determine which component to create the sketch in
+    if component_name:
+        target_component, target_occ = get_component_by_name(component_name)
+        if not target_component:
+            raise Exception(f"Component not found: {component_name}")
     else:
-        plane = root.constructionPlanes.itemByName(plane_id)
+        target_component = root
+        target_occ = None
+    
+    sketches = target_component.sketches
+    
+    # Get plane from the target component
+    if plane_id == "xy":
+        plane = target_component.xYConstructionPlane
+    elif plane_id == "xz":
+        plane = target_component.xZConstructionPlane
+    elif plane_id == "yz":
+        plane = target_component.yZConstructionPlane
+    else:
+        # Try to find custom plane in target component first, then root
+        plane = target_component.constructionPlanes.itemByName(plane_id)
+        if not plane:
+            plane = root.constructionPlanes.itemByName(plane_id)
     
     if not plane:
         raise Exception(f"Plane not found: {plane_id}")
@@ -305,17 +347,27 @@ def handle_create_sketch(body):
     
     return {
         "sketch_id": sketch.name,
-        "name": sketch.name
+        "name": sketch.name,
+        "component": target_component.name
     }
 
 
 def get_sketch(sketch_id):
-    """Get a sketch by name."""
+    """Get a sketch by name, searching root and all components."""
     root = get_root()
+    
+    # Try root first
     sketch = root.sketches.itemByName(sketch_id)
-    if not sketch:
-        raise Exception(f"Sketch not found: {sketch_id}")
-    return sketch
+    if sketch:
+        return sketch
+    
+    # Search all component occurrences
+    for occ in root.allOccurrences:
+        sketch = occ.component.sketches.itemByName(sketch_id)
+        if sketch:
+            return sketch
+    
+    raise Exception(f"Sketch not found: {sketch_id}")
 
 
 def handle_draw_line(body):
@@ -519,9 +571,136 @@ def handle_get_sketch_profiles(body):
     return {"profiles": profiles}
 
 
+def handle_list_sketch_dimensions(body):
+    """List all dimensions in a sketch with their current values and expressions."""
+    sketch = get_sketch(body["sketch_id"])
+    
+    dimensions = []
+    
+    # Iterate through sketch dimensions
+    for i, dim in enumerate(sketch.sketchDimensions):
+        dim_info = {
+            "dimension_id": f"{body['sketch_id']}_dim_{i}",
+            "index": i,
+            "type": dim.objectType.split("::")[-1],  # Get just the type name
+            "value_mm": dim.value * 10,  # cm to mm
+        }
+        
+        # Get the parameter for expression info
+        try:
+            param = dim.parameter
+            if param:
+                dim_info["expression"] = param.expression
+                dim_info["parameter_name"] = param.name
+                dim_info["is_driven"] = param.isDrivenByConstraint if hasattr(param, 'isDrivenByConstraint') else False
+        except:
+            pass
+        
+        # Try to get additional type-specific info
+        try:
+            if hasattr(dim, 'textPosition'):
+                pos = dim.textPosition
+                dim_info["text_position"] = [pos.x * 10, pos.y * 10]
+        except:
+            pass
+            
+        dimensions.append(dim_info)
+    
+    return {
+        "sketch_id": body["sketch_id"],
+        "dimension_count": len(dimensions),
+        "dimensions": dimensions
+    }
+
+
+def handle_edit_sketch_dimension(body):
+    """Edit a sketch dimension by index or ID. Can set numeric value or parameter expression."""
+    sketch = get_sketch(body["sketch_id"])
+    
+    dim_index = body.get("dimension_index")
+    dim_id = body.get("dimension_id")
+    
+    # Find the dimension
+    dimension = None
+    if dim_index is not None:
+        if dim_index < sketch.sketchDimensions.count:
+            dimension = sketch.sketchDimensions.item(dim_index)
+    elif dim_id:
+        # Parse ID like "SketchName_dim_0"
+        parts = dim_id.rsplit("_dim_", 1)
+        if len(parts) == 2:
+            try:
+                idx = int(parts[1])
+                if idx < sketch.sketchDimensions.count:
+                    dimension = sketch.sketchDimensions.item(idx)
+            except ValueError:
+                pass
+    
+    if not dimension:
+        raise Exception(f"Dimension not found: index={dim_index}, id={dim_id}")
+    
+    # Get the parameter associated with this dimension
+    param = dimension.parameter
+    if not param:
+        raise Exception("Dimension has no associated parameter")
+    
+    old_expression = param.expression
+    old_value = dimension.value * 10  # cm to mm
+    
+    # Set new value - either expression (string) or numeric value
+    expression = body.get("expression")
+    value = body.get("value")
+    
+    if expression is not None:
+        # Set expression (can be parameter name like "overall_width" or formula)
+        param.expression = expression
+    elif value is not None:
+        # Set numeric value in mm
+        param.expression = f"{value} mm"
+    else:
+        raise Exception("Must provide either 'expression' or 'value'")
+    
+    # Refresh to see new value
+    new_value = dimension.value * 10
+    
+    return {
+        "success": True,
+        "dimension_id": f"{body['sketch_id']}_dim_{dim_index if dim_index is not None else parts[1]}",
+        "old_expression": old_expression,
+        "old_value_mm": old_value,
+        "new_expression": param.expression,
+        "new_value_mm": new_value
+    }
+
+
 # ============================================================================
 # 3D FEATURES
 # ============================================================================
+
+def get_sketch_with_component(sketch_id, component_name=None):
+    """Get a sketch, optionally from a specific component."""
+    root = get_root()
+    
+    if component_name:
+        target_component, _ = get_component_by_name(component_name)
+        if target_component:
+            sketch = target_component.sketches.itemByName(sketch_id)
+            if sketch:
+                return sketch, target_component
+    
+    # Try root first
+    sketch = root.sketches.itemByName(sketch_id)
+    if sketch:
+        return sketch, root
+    
+    # Search all components
+    for occ in root.allOccurrences:
+        sketch = occ.component.sketches.itemByName(sketch_id)
+        if sketch:
+            return sketch, occ.component
+    
+    raise Exception(f"Sketch not found: {sketch_id}")
+
 
 def handle_extrude(body):
     design = get_design()
@@ -532,23 +711,42 @@ def handle_extrude(body):
     distance = body.get("distance", 10) / 10.0  # mm to cm
     direction = body.get("direction", "positive")
     operation = body.get("operation", "new_body")
+    component_name = body.get("component")  # Optional: specify component
+    target_body_name = body.get("target_body")  # Optional: for join/cut operations
     
-    sketch = get_sketch(sketch_id)
+    # Get sketch and its component
+    sketch, sketch_component = get_sketch_with_component(sketch_id, component_name)
     profile = sketch.profiles.item(profile_index)
     
     if not profile:
         raise Exception(f"Profile not found at index {profile_index}")
     
-    extrudes = root.features.extrudeFeatures
-    extrude_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+    # Use the sketch's component for the extrusion
+    extrudes = sketch_component.features.extrudeFeatures
     
-    # Set operation type
+    # Determine initial operation
+    initial_op = adsk.fusion.FeatureOperations.NewBodyFeatureOperation
     if operation == "join":
-        extrude_input.operation = adsk.fusion.FeatureOperations.JoinFeatureOperation
+        initial_op = adsk.fusion.FeatureOperations.JoinFeatureOperation
     elif operation == "cut":
-        extrude_input.operation = adsk.fusion.FeatureOperations.CutFeatureOperation
+        initial_op = adsk.fusion.FeatureOperations.CutFeatureOperation
     elif operation == "intersect":
-        extrude_input.operation = adsk.fusion.FeatureOperations.IntersectFeatureOperation
+        initial_op = adsk.fusion.FeatureOperations.IntersectFeatureOperation
+    
+    extrude_input = extrudes.createInput(profile, initial_op)
+    
+    # If a target body is specified for join/cut, set the participant bodies
+    if target_body_name and operation in ["join", "cut", "intersect"]:
+        # Find the target body in this component
+        target_body = None
+        for b in sketch_component.bRepBodies:
+            if b.name == target_body_name:
+                target_body = b
+                break
+        
+        if target_body:
+            # participantBodies expects a list of BRepBody, not ObjectCollection
+            extrude_input.participantBodies = [target_body]
     
     # Set distance
     if direction == "symmetric":
@@ -561,11 +759,12 @@ def handle_extrude(body):
     extrude = extrudes.add(extrude_input)
     adsk.doEvents()  # Let Fusion process
     
-    body_name = extrude.bodies.item(0).name if extrude.bodies.count > 0 else None
+    body_name = extrude.bodies.item(0).name if extrude.bodies.count > 0 else target_body_name
     
     return {
         "feature_id": extrude.name,
-        "body_id": body_name
+        "body_id": body_name,
+        "component": sketch_component.name
     }
 
 
@@ -641,31 +840,190 @@ def handle_chamfer_edges(body):
     return {"feature_id": chamfer.name}
 
 
+def find_body_by_name_with_context(root, body_name):
+    """Find a body by name, returns (body, native_body, component, occurrence) tuple.
+    body = proxy body (or native if in root)
+    native_body = the actual body in the component
+    """
+    # First check root bodies
+    for b in root.bRepBodies:
+        if b.name == body_name:
+            return (b, b, root, None)
+    
+    # Then check all occurrences (components)
+    for occ in root.allOccurrences:
+        for b in occ.component.bRepBodies:
+            if b.name == body_name:
+                # Return both proxy and native body
+                proxy = b.createForAssemblyContext(occ)
+                return (proxy, b, occ.component, occ)
+    
+    return (None, None, None, None)
+
+
+def find_body_by_name(root, body_name):
+    """Find a body by name, searching root and all component occurrences."""
+    body, _, _, _ = find_body_by_name_with_context(root, body_name)
+    return body
+
+
+def find_bodies_by_names(root, body_names):
+    """Find multiple bodies by name, returns ObjectCollection of proxy bodies."""
+    bodies = adsk.core.ObjectCollection.create()
+    
+    # Check root bodies
+    for b in root.bRepBodies:
+        if b.name in body_names:
+            bodies.add(b)
+    
+    # Check all occurrences
+    for occ in root.allOccurrences:
+        for b in occ.component.bRepBodies:
+            if b.name in body_names:
+                bodies.add(b.createForAssemblyContext(occ))
+    
+    return bodies
+
+
+def find_native_bodies_by_names(root, body_names):
+    """Find multiple bodies by name, returns list of native bodies (not proxies)."""
+    bodies = []
+    
+    # Check root bodies
+    for b in root.bRepBodies:
+        if b.name in body_names:
+            bodies.append(b)
+    
+    # Check all occurrences  
+    for occ in root.allOccurrences:
+        for b in occ.component.bRepBodies:
+            if b.name in body_names:
+                bodies.append(b)  # Native body, not proxy
+    
+    return bodies
+
+
+def handle_delete_body(body):
+    """Delete a body by name."""
+    root = get_root()
+    body_name = body.get("body_name")
+    component_name = body.get("component")  # Optional: specify component
+    
+    if not body_name:
+        raise Exception("body_name is required")
+    
+    deleted = False
+    
+    # If component specified, search only there
+    if component_name:
+        target_component, target_occ = get_component_by_name(component_name)
+        if target_component:
+            for b in target_component.bRepBodies:
+                if b.name == body_name:
+                    b.deleteMe()
+                    deleted = True
+                    break
+    else:
+        # Search root first
+        for b in root.bRepBodies:
+            if b.name == body_name:
+                b.deleteMe()
+                deleted = True
+                break
+        
+        # If not found in root, search components
+        if not deleted:
+            for occ in root.allOccurrences:
+                for b in occ.component.bRepBodies:
+                    if b.name == body_name:
+                        b.deleteMe()
+                        deleted = True
+                        break
+                if deleted:
+                    break
+    
+    if not deleted:
+        raise Exception(f"Body not found: {body_name}")
+    
+    return {
+        "success": True,
+        "deleted_body": body_name
+    }
+
+
+def handle_delete_sketch(body):
+    """Delete a sketch by name."""
+    root = get_root()
+    sketch_name = body.get("sketch_name")
+    component_name = body.get("component")  # Optional: specify component
+    
+    if not sketch_name:
+        raise Exception("sketch_name is required")
+    
+    deleted = False
+    
+    # If component specified, search only there
+    if component_name:
+        target_component, target_occ = get_component_by_name(component_name)
+        if target_component:
+            sketch = target_component.sketches.itemByName(sketch_name)
+            if sketch:
+                sketch.deleteMe()
+                deleted = True
+    else:
+        # Search root first
+        sketch = root.sketches.itemByName(sketch_name)
+        if sketch:
+            sketch.deleteMe()
+            deleted = True
+        
+        # If not found in root, search components
+        if not deleted:
+            for occ in root.allOccurrences:
+                sketch = occ.component.sketches.itemByName(sketch_name)
+                if sketch:
+                    sketch.deleteMe()
+                    deleted = True
+                    break
+    
+    if not deleted:
+        raise Exception(f"Sketch not found: {sketch_name}")
+    
+    return {
+        "success": True,
+        "deleted_sketch": sketch_name
+    }
+
+
 def handle_boolean(body):
     root = get_root()
+    design = get_design()
     operation = body.get("operation", "union")
     target_body_id = body.get("target_body")
     tool_body_ids = body.get("tool_bodies", [])
     keep_tools = body.get("keep_tools", False)
     
-    # Find bodies
-    target_body = None
-    tool_bodies = adsk.core.ObjectCollection.create()
+    # Find target body with full context info
+    target_proxy, target_native, target_component, target_occ = find_body_by_name_with_context(root, target_body_id)
     
-    for b in root.bRepBodies:
-        if b.name == target_body_id:
-            target_body = b
-        if b.name in tool_body_ids:
-            tool_bodies.add(b)
-    
-    if not target_body:
+    if not target_proxy:
         raise Exception(f"Target body not found: {target_body_id}")
+    
+    # Find tool bodies (as proxies for assembly context)
+    tool_bodies = find_bodies_by_names(root, tool_body_ids)
     
     if tool_bodies.count == 0:
         raise Exception("No tool bodies found")
     
+    # Check if this is a cross-component operation
+    target_in_subcomponent = target_occ is not None
+    
+    # For cross-component operations, we need to verify bodies intersect/touch
+    # The standard combine should work for both cut and join if using proxy bodies
+    
+    # Use the root's combine features - this works for assembly-level operations
     combines = root.features.combineFeatures
-    combine_input = combines.createInput(target_body, tool_bodies)
+    combine_input = combines.createInput(target_proxy, tool_bodies)
     
     if operation == "union":
         combine_input.operation = adsk.fusion.FeatureOperations.JoinFeatureOperation
@@ -676,12 +1034,23 @@ def handle_boolean(body):
     
     combine_input.isKeepToolBodies = keep_tools
     
-    combine = combines.add(combine_input)
-    
-    return {
-        "success": True,
-        "result_body": target_body.name
-    }
+    try:
+        combine = combines.add(combine_input)
+        
+        return {
+            "success": True,
+            "result_body": target_body_id,
+            "operation": operation,
+            "method": "standard_combine",
+            "target_component": target_occ.name if target_occ else "root",
+            "cross_component": target_in_subcomponent
+        }
+    except Exception as e:
+        # If standard combine fails for cross-component, provide helpful error
+        error_msg = str(e)
+        if target_in_subcomponent and operation == "union":
+            error_msg += " (Cross-component unions may require bodies to be in same component. Try creating geometry directly in target component.)"
+        raise Exception(error_msg)
 
 
 # ============================================================================
@@ -1395,6 +1764,226 @@ def handle_get_timeline(body):
             })
     
     return {"features": features}
+
+
+def handle_get_feature_parameters(body):
+    """Get all editable parameters for a feature by name or timeline index."""
+    design = get_design()
+    timeline = design.timeline
+    
+    feature_name = body.get("feature_name")
+    feature_index = body.get("feature_index")
+    
+    # Find the feature
+    feature = None
+    timeline_item = None
+    
+    if feature_index is not None:
+        if feature_index < timeline.count:
+            timeline_item = timeline.item(feature_index)
+            feature = timeline_item.entity
+    elif feature_name:
+        for i in range(timeline.count):
+            item = timeline.item(i)
+            try:
+                if item.name == feature_name:
+                    timeline_item = item
+                    feature = item.entity
+                    break
+            except:
+                pass
+    
+    if not feature:
+        raise Exception(f"Feature not found: name={feature_name}, index={feature_index}")
+    
+    result = {
+        "feature_name": timeline_item.name if timeline_item else "unknown",
+        "feature_type": feature.objectType if feature else "unknown",
+        "parameters": []
+    }
+    
+    # Extract parameters based on feature type
+    try:
+        # For extrude features
+        if hasattr(feature, 'extentOne'):
+            extent = feature.extentOne
+            if hasattr(extent, 'distance'):
+                dist_param = extent.distance
+                result["parameters"].append({
+                    "name": "distance",
+                    "type": "extent",
+                    "value_mm": dist_param.value * 10,
+                    "expression": dist_param.expression if hasattr(dist_param, 'expression') else None
+                })
+        
+        # For general parametric features, try to get all parameters
+        if hasattr(feature, 'parameters'):
+            for param in feature.parameters:
+                result["parameters"].append({
+                    "name": param.name,
+                    "value": param.value * 10 if param.unit == "cm" else param.value,
+                    "expression": param.expression,
+                    "unit": param.unit
+                })
+    except Exception as e:
+        result["error"] = str(e)
+    
+    # Also check for model parameters that reference this feature
+    try:
+        all_params = design.allParameters
+        feature_params = []
+        for param in all_params:
+            try:
+                if timeline_item.name in param.name or timeline_item.name in (param.expression or ""):
+                    feature_params.append({
+                        "name": param.name,
+                        "value": param.value * 10 if "mm" in (param.unit or "") or param.unit == "cm" else param.value,
+                        "expression": param.expression,
+                        "unit": param.unit
+                    })
+            except:
+                pass
+        if feature_params:
+            result["related_parameters"] = feature_params
+    except:
+        pass
+    
+    return result
+
+
+def handle_edit_feature_parameter(body):
+    """Edit a feature's parameter by setting expression or value."""
+    design = get_design()
+    timeline = design.timeline
+    
+    feature_name = body.get("feature_name")
+    feature_index = body.get("feature_index")
+    param_name = body.get("parameter_name", "distance")  # Default to distance for extrudes
+    expression = body.get("expression")
+    value = body.get("value")
+    
+    # Find the feature
+    feature = None
+    timeline_item = None
+    
+    if feature_index is not None:
+        if feature_index < timeline.count:
+            timeline_item = timeline.item(feature_index)
+            feature = timeline_item.entity
+    elif feature_name:
+        for i in range(timeline.count):
+            item = timeline.item(i)
+            try:
+                if item.name == feature_name:
+                    timeline_item = item
+                    feature = item.entity
+                    break
+            except:
+                pass
+    
+    if not feature:
+        raise Exception(f"Feature not found: name={feature_name}, index={feature_index}")
+    
+    # Try to edit the parameter
+    old_value = None
+    old_expression = None
+    new_value = None
+    
+    try:
+        # Handle extrude features specially
+        if hasattr(feature, 'extentOne') and param_name == "distance":
+            extent = feature.extentOne
+            if hasattr(extent, 'distance'):
+                dist_param = extent.distance
+                old_expression = dist_param.expression if hasattr(dist_param, 'expression') else str(dist_param.value)
+                old_value = dist_param.value * 10
+                
+                # Set new value
+                if expression is not None:
+                    dist_param.expression = expression
+                elif value is not None:
+                    dist_param.expression = f"{value} mm"
+                
+                new_value = dist_param.value * 10
+        
+        # For other features, try via model parameters
+        else:
+            all_params = design.allParameters
+            for param in all_params:
+                if param_name in param.name:
+                    old_expression = param.expression
+                    old_value = param.value * 10 if param.unit == "cm" else param.value
+                    
+                    if expression is not None:
+                        param.expression = expression
+                    elif value is not None:
+                        param.expression = f"{value} mm"
+                    
+                    new_value = param.value * 10 if param.unit == "cm" else param.value
+                    break
+        
+        if old_value is None:
+            raise Exception(f"Parameter '{param_name}' not found on feature")
+            
+    except Exception as e:
+        raise Exception(f"Failed to edit parameter: {str(e)}")
+    
+    return {
+        "success": True,
+        "feature_name": timeline_item.name if timeline_item else feature_name,
+        "parameter_name": param_name,
+        "old_expression": old_expression,
+        "old_value_mm": old_value,
+        "new_expression": expression if expression else f"{value} mm",
+        "new_value_mm": new_value
+    }
+
+
+def handle_list_all_parameters(body):
+    """List ALL parameters in the model (user + model parameters)."""
+    design = get_design()
+    
+    result = {
+        "user_parameters": [],
+        "model_parameters": []
+    }
+    
+    # User parameters
+    for param in design.userParameters:
+        result["user_parameters"].append({
+            "name": param.name,
+            "value": param.value * 10 if param.unit == "cm" else param.value,
+            "expression": param.expression,
+            "unit": param.unit,
+            "comment": param.comment
+        })
+    
+    # Model parameters (from features)
+    include_model = body.get("include_model_parameters", False)
+    if include_model:
+        try:
+            for param in design.allParameters:
+                # Skip user parameters (already listed)
+                is_user = False
+                for up in design.userParameters:
+                    if up.name == param.name:
+                        is_user = True
+                        break
+                
+                if not is_user:
+                    result["model_parameters"].append({
+                        "name": param.name,
+                        "value": param.value * 10 if param.unit == "cm" else param.value,
+                        "expression": param.expression,
+                        "unit": param.unit
+                    })
+        except:
+            pass
+    
+    result["user_count"] = len(result["user_parameters"])
+    result["model_count"] = len(result["model_parameters"]) if include_model else "not requested"
+    
+    return result
 
 
 def handle_export(body):
@@ -2115,6 +2704,8 @@ ROUTES = {
     "/sketch_fillet": handle_sketch_fillet,
     "/finish_sketch": handle_finish_sketch,
     "/get_sketch_profiles": handle_get_sketch_profiles,
+    "/list_sketch_dimensions": handle_list_sketch_dimensions,
+    "/edit_sketch_dimension": handle_edit_sketch_dimension,
     
     # 3D Features
     "/extrude": handle_extrude,
@@ -2128,6 +2719,10 @@ ROUTES = {
     "/list_faces": handle_list_faces,
     "/select_by_position": handle_select_by_position,
     
+    # Delete
+    "/delete_body": handle_delete_body,
+    "/delete_sketch": handle_delete_sketch,
+    
     # Transform
     "/copy_body": handle_copy_body,
     "/move_body": handle_move_body,
@@ -2138,6 +2733,11 @@ ROUTES = {
     "/create_parameter": handle_create_parameter,
     "/modify_parameter": handle_modify_parameter,
     "/list_parameters": handle_list_parameters,
+    "/list_all_parameters": handle_list_all_parameters,
+    
+    # Feature Editing
+    "/get_feature_parameters": handle_get_feature_parameters,
+    "/edit_feature_parameter": handle_edit_feature_parameter,
     
     # Appearance
     "/apply_appearance": handle_apply_appearance,

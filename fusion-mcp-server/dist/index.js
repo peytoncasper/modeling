@@ -84,12 +84,13 @@ const TOOLS = [
     },
     {
         name: "fusion_create_offset_plane",
-        description: "Create an offset construction plane.",
+        description: "Create an offset construction plane. Can optionally target a specific component.",
         inputSchema: {
             type: "object",
             properties: {
                 base_plane: { type: "string", description: "Plane ID to offset from (xy, xz, yz, or custom name)" },
                 offset: { type: "number", description: "Distance in mm" },
+                component: { type: "string", description: "Optional component name to create plane in" },
             },
             required: ["base_plane", "offset"],
         },
@@ -97,12 +98,13 @@ const TOOLS = [
     // ============ Sketch Operations ============
     {
         name: "fusion_create_sketch",
-        description: "Start a new sketch on a plane.",
+        description: "Start a new sketch on a plane. Can optionally target a specific component.",
         inputSchema: {
             type: "object",
             properties: {
                 plane: { type: "string", description: "Plane ID (xy, xz, yz, or custom)" },
                 name: { type: "string", description: "Optional sketch name" },
+                component: { type: "string", description: "Optional component name (e.g., 'Carcass' or 'Carcass:1') to create sketch in" },
             },
             required: ["plane"],
         },
@@ -225,10 +227,36 @@ const TOOLS = [
             required: ["sketch_id"],
         },
     },
+    {
+        name: "fusion_list_sketch_dimensions",
+        description: "List all dimensions in a sketch with their values and expressions.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                sketch_id: { type: "string", description: "Target sketch name" },
+            },
+            required: ["sketch_id"],
+        },
+    },
+    {
+        name: "fusion_edit_sketch_dimension",
+        description: "Edit a sketch dimension by setting a value or parameter expression.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                sketch_id: { type: "string", description: "Target sketch name" },
+                dimension_index: { type: "number", description: "Dimension index (0-based)" },
+                dimension_id: { type: "string", description: "Dimension ID (alternative to index)" },
+                value: { type: "number", description: "New value in mm" },
+                expression: { type: "string", description: "Parameter expression (e.g., 'overall_width' or 'overall_width / 2')" },
+            },
+            required: ["sketch_id"],
+        },
+    },
     // ============ 3D Features ============
     {
         name: "fusion_extrude",
-        description: "Extrude a sketch profile into a 3D body.",
+        description: "Extrude a sketch profile into a 3D body. For join/cut operations within a component, specify target_body.",
         inputSchema: {
             type: "object",
             properties: {
@@ -237,6 +265,8 @@ const TOOLS = [
                 distance: { type: "number", description: "Extrusion distance in mm" },
                 direction: { type: "string", enum: ["positive", "negative", "symmetric"], description: "Extrusion direction" },
                 operation: { type: "string", enum: ["new_body", "join", "cut", "intersect"], description: "Boolean operation" },
+                component: { type: "string", description: "Optional component name to find sketch in" },
+                target_body: { type: "string", description: "Optional target body name for join/cut operations (must be in same component as sketch)" },
             },
             required: ["sketch_id", "distance"],
         },
@@ -290,6 +320,30 @@ const TOOLS = [
                 component: { type: "string", description: "Component to query (default: root)" },
             },
             required: [],
+        },
+    },
+    {
+        name: "fusion_delete_body",
+        description: "Delete a body by name.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                body_name: { type: "string", description: "Name of the body to delete" },
+                component: { type: "string", description: "Optional component to search in" },
+            },
+            required: ["body_name"],
+        },
+    },
+    {
+        name: "fusion_delete_sketch",
+        description: "Delete a sketch by name.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                sketch_name: { type: "string", description: "Name of the sketch to delete" },
+                component: { type: "string", description: "Optional component to search in" },
+            },
+            required: ["sketch_name"],
         },
     },
     {
@@ -437,6 +491,44 @@ const TOOLS = [
         name: "fusion_list_parameters",
         description: "Get all user parameters.",
         inputSchema: { type: "object", properties: {}, required: [] },
+    },
+    {
+        name: "fusion_list_all_parameters",
+        description: "List all parameters including model parameters from features.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                include_model_parameters: { type: "boolean", description: "Include model parameters (default: false)" },
+            },
+            required: [],
+        },
+    },
+    {
+        name: "fusion_get_feature_parameters",
+        description: "Get all editable parameters for a feature by name or timeline index.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                feature_name: { type: "string", description: "Feature name from timeline" },
+                feature_index: { type: "number", description: "Timeline index (alternative to name)" },
+            },
+            required: [],
+        },
+    },
+    {
+        name: "fusion_edit_feature_parameter",
+        description: "Edit a feature's parameter (e.g., extrude distance). Can set numeric value or parameter expression.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                feature_name: { type: "string", description: "Feature name from timeline" },
+                feature_index: { type: "number", description: "Timeline index (alternative to name)" },
+                parameter_name: { type: "string", description: "Parameter to edit (default: 'distance' for extrudes)" },
+                value: { type: "number", description: "New value in mm" },
+                expression: { type: "string", description: "Parameter expression (e.g., 'carcass_thickness' or 'overall_width - 2 * carcass_thickness')" },
+            },
+            required: [],
+        },
     },
     // ============ Appearance ============
     {
@@ -675,11 +767,15 @@ const ENDPOINTS = {
     fusion_sketch_fillet: "/sketch_fillet",
     fusion_finish_sketch: "/finish_sketch",
     fusion_get_sketch_profiles: "/get_sketch_profiles",
+    fusion_list_sketch_dimensions: "/list_sketch_dimensions",
+    fusion_edit_sketch_dimension: "/edit_sketch_dimension",
     fusion_extrude: "/extrude",
     fusion_fillet_edges: "/fillet_edges",
     fusion_chamfer_edges: "/chamfer_edges",
     fusion_boolean: "/boolean",
     fusion_list_bodies: "/list_bodies",
+    fusion_delete_body: "/delete_body",
+    fusion_delete_sketch: "/delete_sketch",
     fusion_list_edges: "/list_edges",
     fusion_list_faces: "/list_faces",
     fusion_select_by_position: "/select_by_position",
@@ -690,6 +786,9 @@ const ENDPOINTS = {
     fusion_create_parameter: "/create_parameter",
     fusion_modify_parameter: "/modify_parameter",
     fusion_list_parameters: "/list_parameters",
+    fusion_list_all_parameters: "/list_all_parameters",
+    fusion_get_feature_parameters: "/get_feature_parameters",
+    fusion_edit_feature_parameter: "/edit_feature_parameter",
     fusion_apply_appearance: "/apply_appearance",
     fusion_list_appearances: "/list_appearances",
     fusion_take_screenshot: "/take_screenshot",
