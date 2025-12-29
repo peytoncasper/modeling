@@ -1,0 +1,139 @@
+{
+  "project_name": "Bedside Table",
+  "material_thickness_mm": 19,
+  "kerf_mm": 3.2,
+  
+  "parts_19mm": [
+    {
+      "id": "carcass_top",
+      "name": "Carcass Top",
+      "width_mm": 450,
+      "length_mm": 400,
+      "quantity": 1,
+      "source": "Fusion 360"
+    },
+    {
+      "id": "carcass_bottom",
+      "name": "Carcass Bottom",
+      "width_mm": 450,
+      "length_mm": 400,
+      "quantity": 1,
+      "source": "Fusion 360"
+    },
+    {
+      "id": "carcass_left",
+      "name": "Carcass Left Side",
+      "width_mm": 400,
+      "length_mm": 579,
+      "quantity": 1,
+      "source": "Fusion 360"
+    },
+    {
+      "id": "carcass_right",
+      "name": "Carcass Right Side",
+      "width_mm": 400,
+      "length_mm": 579,
+      "quantity": 1,
+      "source": "Fusion 360"
+    },
+    {
+      "id": "drawer_front_bottom",
+      "name": "Bottom Drawer Front",
+      "width_mm": 400,
+      "length_mm": 306,
+      "quantity": 1,
+      "source": "Fusion 360"
+    },
+    {
+      "id": "drawer_front_top",
+      "name": "Top Drawer Front",
+      "width_mm": 400,
+      "length_mm": 217,
+      "quantity": 1,
+      "source": "Fusion 360"
+    }
+  ],
+
+  "parts_plywood": [
+    {
+      "id": "false_floor",
+      "name": "False Floor",
+      "width_mm": 424,
+      "length_mm": 347,
+      "thickness_mm": 12,
+      "source": "Fusion 360 - 12mm ply"
+    },
+    {
+      "id": "back_panel",
+      "name": "Back Panel",
+      "width_mm": 432,
+      "length_mm": 561,
+      "thickness_mm": 6,
+      "source": "Fusion 360 - 6mm ply"
+    }
+  ],
+
+  "boards_purchased": [
+    {
+      "id": "board_1",
+      "raw_length_inches": 60.5,
+      "raw_width_inches": 7,
+      "raw_length_mm": 1537,
+      "raw_width_mm": 178,
+      "usable_length_mm": 1487,
+      "usable_width_mm": 163,
+      "notes": "After squaring ends (-50mm) and jointing edge (-15mm)"
+    },
+    {
+      "id": "board_2",
+      "raw_length_inches": 60,
+      "raw_width_inches": 6,
+      "raw_length_mm": 1524,
+      "raw_width_mm": 152,
+      "usable_length_mm": 1474,
+      "usable_width_mm": 137,
+      "notes": "Narrowest board - use for drawer fronts"
+    },
+    {
+      "id": "board_3",
+      "raw_length_inches": 49.5,
+      "raw_width_inches": 7,
+      "raw_length_mm": 1257,
+      "raw_width_mm": 178,
+      "usable_length_mm": 1207,
+      "usable_width_mm": 163,
+      "notes": "Shorter board"
+    },
+    {
+      "id": "board_4",
+      "raw_length_inches": 60,
+      "raw_width_inches": 7.5,
+      "raw_length_mm": 1524,
+      "raw_width_mm": 191,
+      "usable_length_mm": 1474,
+      "usable_width_mm": 176,
+      "notes": "Widest board"
+    },
+    {
+      "id": "board_5",
+      "raw_length_inches": 49.5,
+      "raw_width_inches": 7.5,
+      "raw_length_mm": 1257,
+      "raw_width_mm": 191,
+      "usable_length_mm": 1207,
+      "usable_width_mm": 176,
+      "notes": "Shorter but wide"
+    },
+    {
+      "id": "board_6",
+      "raw_length_inches": 60.5,
+      "raw_width_inches": 6.5,
+      "raw_length_mm": 1537,
+      "raw_width_mm": 165,
+      "usable_length_mm": 1487,
+      "usable_width_mm": 150,
+      "notes": "Medium width"
+    }
+  ]
+}
+

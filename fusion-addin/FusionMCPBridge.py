@@ -2639,6 +2639,230 @@ def handle_cam_simulate(body):
 
 
 # ============================================================================
+# DELETE SKETCH
+# ============================================================================
+
+def handle_delete_sketch(body):
+    """Delete a sketch by name."""
+    root = get_root()
+    
+    sketch_name = body.get("sketch_name")
+    if not sketch_name:
+        raise Exception("sketch_name is required")
+    
+    deleted = []
+    # Find and delete all sketches with this name
+    sketches_to_delete = []
+    for sketch in root.sketches:
+        if sketch.name == sketch_name or sketch.name.startswith(sketch_name + " ("):
+            sketches_to_delete.append(sketch)
+    
+    for sketch in sketches_to_delete:
+        name = sketch.name
+        sketch.deleteMe()
+        deleted.append(name)
+    
+    adsk.doEvents()
+    
+    return {
+        "success": True,
+        "deleted": deleted,
+        "count": len(deleted)
+    }
+
+
+# ============================================================================
+# SVG & TEXT IMPORT
+# ============================================================================
+
+def handle_import_svg(body):
+    """Import an SVG file into a sketch on a face or plane."""
+    root = get_root()
+    
+    svg_path = body.get("svg_path")
+    if not svg_path:
+        raise Exception("svg_path is required")
+    
+    if not os.path.exists(svg_path):
+        raise Exception(f"SVG file not found: {svg_path}")
+    
+    # Get target - either a face on a body or a plane
+    target_face = None
+    body_id = body.get("body_id")
+    face_index = body.get("face_index", 0)  # Default to first face
+    plane_id = body.get("plane")
+    
+    if body_id:
+        # Find the body and get the specified face
+        for b in root.bRepBodies:
+            if b.name == body_id:
+                # Find a planar face (top face usually)
+                planar_faces = []
+                for i, face in enumerate(b.faces):
+                    geo = face.geometry
+                    if hasattr(geo, 'surfaceType') and geo.surfaceType == adsk.core.SurfaceTypes.PlaneSurfaceType:
+                        # Check if it's a top face (normal pointing up in Z)
+                        if hasattr(geo, 'normal') and abs(geo.normal.z) > 0.9:
+                            planar_faces.append((i, face, geo.normal.z))
+                
+                # Sort by Z normal to get top face (positive Z)
+                planar_faces.sort(key=lambda x: x[2], reverse=True)
+                
+                if face_index < len(planar_faces):
+                    target_face = planar_faces[face_index][1]
+                elif len(planar_faces) > 0:
+                    target_face = planar_faces[0][1]
+                else:
+                    raise Exception(f"No planar faces found on body: {body_id}")
+                break
+        
+        if not target_face:
+            raise Exception(f"Body not found: {body_id}")
+    elif plane_id:
+        # Use a construction plane
+        if plane_id == "xy":
+            target_face = root.xYConstructionPlane
+        elif plane_id == "xz":
+            target_face = root.xZConstructionPlane
+        elif plane_id == "yz":
+            target_face = root.yZConstructionPlane
+        else:
+            target_face = root.constructionPlanes.itemByName(plane_id)
+        
+        if not target_face:
+            raise Exception(f"Plane not found: {plane_id}")
+    else:
+        raise Exception("Either body_id or plane is required")
+    
+    # Create a sketch on the target
+    sketches = root.sketches
+    sketch = sketches.add(target_face)
+    
+    # Set sketch name if provided
+    sketch_name = body.get("sketch_name", "SVG_Import")
+    sketch.name = sketch_name
+    
+    # Import the SVG
+    # Position offset in cm (convert from mm)
+    x_offset = body.get("x_offset", 0) / 10.0
+    y_offset = body.get("y_offset", 0) / 10.0
+    scale = body.get("scale", 1.0)
+    
+    # Use importSVG method
+    import_result = sketch.importSVG(svg_path, x_offset, y_offset, scale)
+    
+    adsk.doEvents()
+    
+    # Get profile count
+    profile_count = sketch.profiles.count
+    curve_count = sketch.sketchCurves.count
+    
+    return {
+        "success": True,
+        "sketch_id": sketch.name,
+        "profile_count": profile_count,
+        "curve_count": curve_count,
+        "message": f"SVG imported with {curve_count} curves and {profile_count} profiles"
+    }
+
+
+def handle_add_text(body):
+    """Add text to a sketch."""
+    root = get_root()
+    
+    text = body.get("text")
+    if not text:
+        raise Exception("text is required")
+    
+    font_name = body.get("font", "Arial")
+    height = body.get("height", 10) / 10.0  # mm to cm
+    
+    # Get or create sketch
+    sketch_id = body.get("sketch_id")
+    body_id = body.get("body_id")
+    plane_id = body.get("plane")
+    
+    sketch = None
+    
+    if sketch_id:
+        # Use existing sketch
+        sketch = root.sketches.itemByName(sketch_id)
+        if not sketch:
+            raise Exception(f"Sketch not found: {sketch_id}")
+    elif body_id:
+        # Create sketch on body's top face
+        for b in root.bRepBodies:
+            if b.name == body_id:
+                # Find top planar face
+                for face in b.faces:
+                    geo = face.geometry
+                    if hasattr(geo, 'surfaceType') and geo.surfaceType == adsk.core.SurfaceTypes.PlaneSurfaceType:
+                        if hasattr(geo, 'normal') and geo.normal.z > 0.9:
+                            sketch = root.sketches.add(face)
+                            break
+                break
+        if not sketch:
+            raise Exception(f"Could not create sketch on body: {body_id}")
+    elif plane_id:
+        # Create sketch on plane
+        if plane_id == "xy":
+            plane = root.xYConstructionPlane
+        elif plane_id == "xz":
+            plane = root.xZConstructionPlane
+        elif plane_id == "yz":
+            plane = root.yZConstructionPlane
+        else:
+            plane = root.constructionPlanes.itemByName(plane_id)
+        
+        if not plane:
+            raise Exception(f"Plane not found: {plane_id}")
+        sketch = root.sketches.add(plane)
+    else:
+        raise Exception("Either sketch_id, body_id, or plane is required")
+    
+    # Set sketch name
+    if body.get("sketch_name"):
+        sketch.name = body.get("sketch_name")
+    
+    # Position in cm
+    x = body.get("x", 0) / 10.0
+    y = body.get("y", 0) / 10.0
+    
+    # Create text using createInput(text, height, point)
+    texts = sketch.sketchTexts
+    
+    # Position point
+    position = adsk.core.Point3D.create(x, y, 0)
+    
+    # Get rotation angle in radians
+    rotation_deg = body.get("rotation", 0)
+    rotation_rad = rotation_deg * 3.14159265359 / 180.0
+    
+    # Create text input - API is: createInput(text, height, point)
+    text_input = texts.createInput(text, height, position)
+    text_input.fontName = font_name
+    text_input.angle = rotation_rad
+    
+    if body.get("bold", False):
+        text_input.isBold = True
+    if body.get("italic", False):
+        text_input.isItalic = True
+    
+    sketch_text = texts.add(text_input)
+    
+    adsk.doEvents()
+    
+    profile_count = sketch.profiles.count
+    
+    return {
+        "success": True,
+        "sketch_id": sketch.name,
+        "profile_count": profile_count,
+        "message": f"Text '{text}' added with {profile_count} profiles"
+    }
+
+
+# ============================================================================
 # ROUTE TABLE
 # ============================================================================
 
@@ -2706,6 +2930,9 @@ ROUTES = {
     "/get_sketch_profiles": handle_get_sketch_profiles,
     "/list_sketch_dimensions": handle_list_sketch_dimensions,
     "/edit_sketch_dimension": handle_edit_sketch_dimension,
+    "/import_svg": handle_import_svg,
+    "/add_text": handle_add_text,
+    "/delete_sketch": handle_delete_sketch,
     
     # 3D Features
     "/extrude": handle_extrude,

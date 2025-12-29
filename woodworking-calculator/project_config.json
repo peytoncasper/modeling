@@ -1,0 +1,132 @@
+{
+  "project_name": "Drawer Cabinet",
+  "material_thickness_mm": 19,
+  "kerf_mm": 3.2,
+  "edge_joint_loss_mm": 3,
+  "min_scrap_length_mm": 100,
+  
+  "parts": [
+    {
+      "id": "carcass_top",
+      "name": "Carcass Top",
+      "width_mm": 460,
+      "length_mm": 410,
+      "quantity_needed": 1,
+      "quantity_made": 0,
+      "notes": "Includes 5mm miter allowance per edge"
+    },
+    {
+      "id": "carcass_bottom",
+      "name": "Carcass Bottom",
+      "width_mm": 460,
+      "length_mm": 410,
+      "quantity_needed": 1,
+      "quantity_made": 0,
+      "notes": "Includes 5mm miter allowance per edge"
+    },
+    {
+      "id": "carcass_side_left",
+      "name": "Carcass Side (Left)",
+      "width_mm": 410,
+      "length_mm": 589,
+      "quantity_needed": 1,
+      "quantity_made": 1,
+      "notes": "Already made"
+    },
+    {
+      "id": "carcass_side_right",
+      "name": "Carcass Side (Right)",
+      "width_mm": 410,
+      "length_mm": 589,
+      "quantity_needed": 1,
+      "quantity_made": 0,
+      "notes": "Includes 5mm miter allowance per edge"
+    },
+    {
+      "id": "top_drawer_front",
+      "name": "Top Drawer Front",
+      "width_mm": 438,
+      "length_mm": 217,
+      "quantity_needed": 1,
+      "quantity_made": 1,
+      "notes": "Already made"
+    },
+    {
+      "id": "bottom_drawer_front",
+      "name": "Bottom Drawer Front",
+      "width_mm": 438,
+      "length_mm": 344,
+      "quantity_needed": 1,
+      "quantity_made": 1,
+      "notes": "Already made"
+    },
+    {
+      "id": "false_floor",
+      "name": "False Floor",
+      "width_mm": 412,
+      "length_mm": 381,
+      "quantity_needed": 1,
+      "quantity_made": 0,
+      "notes": "Internal panel for top drawer runner"
+    }
+  ],
+  
+  "inventory": {
+    "processed_boards": [
+      {
+        "id": "proc_1",
+        "length_mm": 780,
+        "width_mm": 150,
+        "thickness_mm": 19,
+        "notes": "Ready to use"
+      },
+      {
+        "id": "proc_2",
+        "length_mm": 643,
+        "width_mm": 160,
+        "thickness_mm": 19,
+        "notes": "Needs rip to 150mm"
+      },
+      {
+        "id": "proc_3",
+        "length_mm": 458,
+        "width_mm": 150,
+        "thickness_mm": 19,
+        "notes": "Ready to use"
+      }
+    ],
+    "unprocessed_boards": [
+      {
+        "id": "raw_1",
+        "length_mm": 2786,
+        "width_mm": 185,
+        "rough_thickness_mm": 25,
+        "final_thickness_mm": 19,
+        "end_trim_mm": 50,
+        "edge_waste_mm": 10,
+        "notes": "8ft rough white oak"
+      },
+      {
+        "id": "raw_2",
+        "length_mm": 2410,
+        "width_mm": 175,
+        "rough_thickness_mm": 25,
+        "final_thickness_mm": 19,
+        "end_trim_mm": 50,
+        "edge_waste_mm": 10,
+        "notes": "8ft rough white oak"
+      }
+    ]
+  },
+  
+  "glue_up_config": {
+    "target_strip_width_mm": 150,
+    "strips_per_panel": 3,
+    "glue_line_loss_mm": 1,
+    "panel_trim_margin_mm": 10
+  }
+}
+
+
+
+

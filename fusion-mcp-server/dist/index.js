@@ -253,6 +253,44 @@ const TOOLS = [
             required: ["sketch_id"],
         },
     },
+    {
+        name: "fusion_import_svg",
+        description: "Import an SVG file into a sketch on a body face or plane.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                svg_path: { type: "string", description: "Absolute path to the SVG file" },
+                body_id: { type: "string", description: "Body to place SVG on (uses top face)" },
+                plane: { type: "string", description: "Plane ID (xy, xz, yz) - alternative to body_id" },
+                x_offset: { type: "number", description: "X offset in mm (default: 0)" },
+                y_offset: { type: "number", description: "Y offset in mm (default: 0)" },
+                scale: { type: "number", description: "Scale factor (default: 1.0)" },
+                sketch_name: { type: "string", description: "Name for the sketch" },
+            },
+            required: ["svg_path"],
+        },
+    },
+    {
+        name: "fusion_add_text",
+        description: "Add text to a sketch for engraving or extrusion.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                text: { type: "string", description: "The text to add" },
+                body_id: { type: "string", description: "Body to place text on (uses top face)" },
+                plane: { type: "string", description: "Plane ID - alternative to body_id" },
+                sketch_id: { type: "string", description: "Existing sketch to add text to" },
+                x: { type: "number", description: "X position in mm" },
+                y: { type: "number", description: "Y position in mm" },
+                height: { type: "number", description: "Text height in mm (default: 10)" },
+                font: { type: "string", description: "Font name (default: Arial)" },
+                bold: { type: "boolean", description: "Make text bold" },
+                italic: { type: "boolean", description: "Make text italic" },
+                sketch_name: { type: "string", description: "Name for the sketch" },
+            },
+            required: ["text"],
+        },
+    },
     // ============ 3D Features ============
     {
         name: "fusion_extrude",
@@ -769,6 +807,8 @@ const ENDPOINTS = {
     fusion_get_sketch_profiles: "/get_sketch_profiles",
     fusion_list_sketch_dimensions: "/list_sketch_dimensions",
     fusion_edit_sketch_dimension: "/edit_sketch_dimension",
+    fusion_import_svg: "/import_svg",
+    fusion_add_text: "/add_text",
     fusion_extrude: "/extrude",
     fusion_fillet_edges: "/fillet_edges",
     fusion_chamfer_edges: "/chamfer_edges",
