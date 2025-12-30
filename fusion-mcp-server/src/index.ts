@@ -130,13 +130,13 @@ const TOOLS = [
   },
   {
     name: "fusion_draw_line",
-    description: "Draw a line in a sketch.",
+    description: "Draw a line in a sketch. COORDINATE NOTE: [x, y] are local to the sketch plane. On XY plane: x=right, y=forward. On YZ plane: x=forward(Y), y=up(Z). On XZ plane: x=right(X), y=up(Z). Use sketch_to_3d_coords to verify positions.",
     inputSchema: {
       type: "object" as const,
       properties: {
         sketch_id: { type: "string", description: "Target sketch name" },
-        start: { type: "array", items: { type: "number" }, description: "[x, y] start point in mm" },
-        end: { type: "array", items: { type: "number" }, description: "[x, y] end point in mm" },
+        start: { type: "array", items: { type: "number" }, description: "[x, y] start point in mm (local sketch coordinates)" },
+        end: { type: "array", items: { type: "number" }, description: "[x, y] end point in mm (local sketch coordinates)" },
         construction: { type: "boolean", description: "Make it a construction line" },
       },
       required: ["sketch_id", "start", "end"],
@@ -244,6 +244,27 @@ const TOOLS = [
         sketch_id: { type: "string", description: "Target sketch name" },
       },
       required: ["sketch_id"],
+    },
+  },
+  {
+    name: "fusion_list_sketches",
+    description: "List all sketches in the design with their plane information, profile counts, and 3D position hints.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "fusion_sketch_to_3d_coords",
+    description: "Convert 2D sketch coordinates to 3D world coordinates. Essential for understanding where sketch geometry will end up when extruded. Use this BEFORE creating cuts to verify positioning.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        sketch_id: { type: "string", description: "Target sketch name" },
+        points: { type: "array", items: { type: "array", items: { type: "number" } }, description: "Array of [x, y] 2D points to convert" },
+      },
+      required: ["sketch_id", "points"],
     },
   },
   {
@@ -369,6 +390,134 @@ const TOOLS = [
     },
   },
 
+  // ============ Organic Modeling ============
+  {
+    name: "fusion_loft",
+    description: "Loft between multiple sketch profiles to create organic 3D forms. Essential for creating smooth transitions between different cross-sections.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        sketch_ids: { type: "array", items: { type: "string" }, description: "List of sketch names containing profiles to loft between (minimum 2)" },
+        profile_indices: { type: "array", items: { type: "number" }, description: "Profile indices for each sketch (default: 0 for all)" },
+        operation: { type: "string", enum: ["new_body", "join", "cut", "intersect"], description: "Boolean operation (default: new_body)" },
+        is_solid: { type: "boolean", description: "Create solid vs surface (default: true)" },
+        rails: { type: "array", items: { type: "string" }, description: "Optional rail sketch IDs to guide the loft shape" },
+      },
+      required: ["sketch_ids"],
+    },
+  },
+  {
+    name: "fusion_sweep",
+    description: "Sweep a profile along a path curve to create 3D geometry. Useful for creating consistent cross-sections along a curved path.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        profile_sketch_id: { type: "string", description: "Sketch containing the profile to sweep" },
+        path_sketch_id: { type: "string", description: "Sketch containing the path curve" },
+        profile_index: { type: "number", description: "Profile index in the sketch (default: 0)" },
+        operation: { type: "string", enum: ["new_body", "join", "cut", "intersect"], description: "Boolean operation (default: new_body)" },
+        orientation: { type: "string", enum: ["perpendicular", "parallel"], description: "Profile orientation relative to path (default: perpendicular)" },
+        twist_angle: { type: "number", description: "Optional twist angle in degrees along the sweep" },
+      },
+      required: ["profile_sketch_id", "path_sketch_id"],
+    },
+  },
+  {
+    name: "fusion_revolve",
+    description: "Revolve a profile around an axis to create 3D geometry. Perfect for creating bowls, vases, and other rotationally symmetric shapes.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        sketch_id: { type: "string", description: "Sketch containing the profile to revolve" },
+        profile_index: { type: "number", description: "Profile index (default: 0)" },
+        axis: { type: "string", enum: ["x", "y", "z"], description: "Axis to revolve around (default: x)" },
+        axis_sketch_id: { type: "string", description: "Alternative: sketch containing axis line" },
+        axis_line_index: { type: "number", description: "Index of line in axis sketch (default: 0)" },
+        angle: { type: "number", description: "Angle in degrees (default: 360 for full revolution)" },
+        operation: { type: "string", enum: ["new_body", "join", "cut", "intersect"], description: "Boolean operation (default: new_body)" },
+      },
+      required: ["sketch_id"],
+    },
+  },
+  {
+    name: "fusion_create_sphere",
+    description: "Create a sphere primitive body. Useful for boolean operations to create organic concave surfaces.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        center: { type: "array", items: { type: "number" }, description: "[x, y, z] center point in mm" },
+        radius: { type: "number", description: "Radius in mm" },
+        name: { type: "string", description: "Optional name for the body" },
+      },
+      required: ["radius"],
+    },
+  },
+  {
+    name: "fusion_create_cylinder",
+    description: "Create a cylinder primitive body. Center is the base center. Use get_body_center first to find where existing geometry is positioned.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        center: { type: "array", items: { type: "number" }, description: "[x, y, z] center point of BASE in mm - cylinder extends upward along axis from here" },
+        radius: { type: "number", description: "Radius in mm" },
+        height: { type: "number", description: "Height in mm" },
+        axis: { type: "string", enum: ["x", "y", "z"], description: "Cylinder axis (default: z)" },
+        name: { type: "string", description: "Optional name for the body" },
+      },
+      required: ["radius", "height"],
+    },
+  },
+  {
+    name: "fusion_create_box",
+    description: "Create a box primitive body. Much simpler than sketch+extrude for boolean operations. Can specify by corners OR by center+dimensions.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        corner1: { type: "array", items: { type: "number" }, description: "[x, y, z] first corner in mm" },
+        corner2: { type: "array", items: { type: "number" }, description: "[x, y, z] opposite corner in mm" },
+        center: { type: "array", items: { type: "number" }, description: "[x, y, z] center point in mm (alternative to corners)" },
+        width: { type: "number", description: "Width (X) in mm (used with center)" },
+        depth: { type: "number", description: "Depth (Y) in mm (used with center)" },
+        height: { type: "number", description: "Height (Z) in mm (used with center)" },
+        name: { type: "string", description: "Optional name for the body" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "fusion_create_hole",
+    description: "Create a cylindrical hole (cut) through a body. Much simpler than creating a cylinder and doing boolean subtract. Use for mounting holes, etc.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        body_id: { type: "string", description: "Target body to cut the hole in" },
+        center: { type: "array", items: { type: "number" }, description: "[x, y, z] center point of hole start in mm" },
+        diameter: { type: "number", description: "Hole diameter in mm" },
+        depth: { type: "number", description: "Hole depth in mm (ignored if through_all is true)" },
+        axis: { type: "string", enum: ["x", "y", "z"], description: "Direction of hole (default: z = vertical)" },
+        through_all: { type: "boolean", description: "If true, cuts through the entire body" },
+      },
+      required: ["body_id", "center", "diameter"],
+    },
+  },
+  {
+    name: "fusion_extrude_with_draft",
+    description: "Extrude a profile with a draft/taper angle. Creates tapered extrusions for organic shapes.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        sketch_id: { type: "string", description: "Sketch containing the profile" },
+        profile_index: { type: "number", description: "Profile index (default: 0)" },
+        distance: { type: "number", description: "Extrusion distance in mm" },
+        draft_angle: { type: "number", description: "Taper angle in degrees (positive = outward, negative = inward)" },
+        direction: { type: "string", enum: ["positive", "negative", "symmetric"], description: "Extrusion direction" },
+        operation: { type: "string", enum: ["new_body", "join", "cut", "intersect"], description: "Boolean operation" },
+        target_body: { type: "string", description: "Target body for join/cut operations" },
+      },
+      required: ["sketch_id", "distance"],
+    },
+  },
+
   // ============ Selection & Query ============
   {
     name: "fusion_list_bodies",
@@ -454,6 +603,17 @@ const TOOLS = [
         tolerance: { type: "number", description: "Search radius in mm" },
       },
       required: ["point", "type"],
+    },
+  },
+  {
+    name: "fusion_get_body_center",
+    description: "Get the center point, bounding box, and dimensions of a body. ESSENTIAL before positioning cuts, holes, or boolean operations to ensure geometry will intersect correctly.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        body_id: { type: "string", description: "Name of the body to query" },
+      },
+      required: ["body_id"],
     },
   },
 
@@ -837,16 +997,28 @@ const ENDPOINTS: Record<string, string> = {
   fusion_edit_sketch_dimension: "/edit_sketch_dimension",
   fusion_import_svg: "/import_svg",
   fusion_add_text: "/add_text",
+  fusion_list_sketches: "/list_sketches",
+  fusion_sketch_to_3d_coords: "/sketch_to_3d_coords",
   fusion_extrude: "/extrude",
+  fusion_extrude_with_draft: "/extrude_with_draft",
   fusion_fillet_edges: "/fillet_edges",
   fusion_chamfer_edges: "/chamfer_edges",
   fusion_boolean: "/boolean",
+  // Organic Modeling
+  fusion_loft: "/loft",
+  fusion_sweep: "/sweep",
+  fusion_revolve: "/revolve",
+  fusion_create_sphere: "/create_sphere",
+  fusion_create_cylinder: "/create_cylinder",
+  fusion_create_box: "/create_box",
+  fusion_create_hole: "/create_hole",
   fusion_list_bodies: "/list_bodies",
   fusion_delete_body: "/delete_body",
   fusion_delete_sketch: "/delete_sketch",
   fusion_list_edges: "/list_edges",
   fusion_list_faces: "/list_faces",
   fusion_select_by_position: "/select_by_position",
+  fusion_get_body_center: "/get_body_center",
   fusion_copy_body: "/copy_body",
   fusion_move_body: "/move_body",
   fusion_mirror_body: "/mirror_body",

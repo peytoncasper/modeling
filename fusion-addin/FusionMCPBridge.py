@@ -2863,8 +2863,871 @@ def handle_add_text(body):
 
 
 # ============================================================================
+# ORGANIC MODELING - LOFT, SWEEP, REVOLVE
+# ============================================================================
+
+def handle_loft(body):
+    """Loft between multiple sketch profiles to create organic 3D forms.
+    
+    Args:
+        sketch_ids: List of sketch names containing profiles to loft between
+        profile_indices: Optional list of profile indices (default 0 for each sketch)
+        operation: new_body, join, cut, intersect (default: new_body)
+        is_solid: Whether to create solid (True) or surface (False)
+        rails: Optional list of rail sketch IDs for guiding the loft
+    """
+    root = get_root()
+    
+    sketch_ids = body.get("sketch_ids", [])
+    profile_indices = body.get("profile_indices", [])
+    operation = body.get("operation", "new_body")
+    is_solid = body.get("is_solid", True)
+    
+    if len(sketch_ids) < 2:
+        raise Exception("At least 2 sketches are required for loft")
+    
+    # Collect profiles
+    profiles = adsk.core.ObjectCollection.create()
+    
+    for i, sketch_id in enumerate(sketch_ids):
+        sketch = get_sketch(sketch_id)
+        profile_idx = profile_indices[i] if i < len(profile_indices) else 0
+        
+        if profile_idx >= sketch.profiles.count:
+            raise Exception(f"Profile index {profile_idx} not found in sketch {sketch_id}")
+        
+        profiles.add(sketch.profiles.item(profile_idx))
+    
+    # Create loft feature
+    lofts = root.features.loftFeatures
+    loft_input = lofts.createInput(adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+    
+    # Set operation type
+    if operation == "join":
+        loft_input.operation = adsk.fusion.FeatureOperations.JoinFeatureOperation
+    elif operation == "cut":
+        loft_input.operation = adsk.fusion.FeatureOperations.CutFeatureOperation
+    elif operation == "intersect":
+        loft_input.operation = adsk.fusion.FeatureOperations.IntersectFeatureOperation
+    
+    # Add profiles as loft sections
+    for i in range(profiles.count):
+        loft_input.loftSections.add(profiles.item(i))
+    
+    loft_input.isSolid = is_solid
+    loft_input.isClosed = False
+    loft_input.isTangentEdgesMerged = True
+    
+    # Add rails if provided
+    rail_ids = body.get("rails", [])
+    if rail_ids:
+        for rail_id in rail_ids:
+            rail_sketch = get_sketch(rail_id)
+            if rail_sketch.sketchCurves.count > 0:
+                # Get first curve as rail
+                rail_curve = rail_sketch.sketchCurves.item(0)
+                loft_input.centerLineOrRails.addRail(rail_curve)
+    
+    loft = lofts.add(loft_input)
+    adsk.doEvents()
+    
+    body_name = loft.bodies.item(0).name if loft.bodies.count > 0 else "Unknown"
+    
+    return {
+        "feature_id": loft.name,
+        "body_id": body_name,
+        "profiles_used": profiles.count
+    }
+
+
+def handle_sweep(body):
+    """Sweep a profile along a path to create 3D geometry.
+    
+    Args:
+        profile_sketch_id: Sketch containing the profile to sweep
+        path_sketch_id: Sketch containing the path curve
+        profile_index: Profile index in the sketch (default: 0)
+        operation: new_body, join, cut, intersect (default: new_body)
+        orientation: perpendicular, parallel (default: perpendicular)
+        twist_angle: Optional twist angle in degrees along the sweep
+    """
+    root = get_root()
+    
+    profile_sketch_id = body.get("profile_sketch_id")
+    path_sketch_id = body.get("path_sketch_id")
+    profile_index = body.get("profile_index", 0)
+    operation = body.get("operation", "new_body")
+    
+    if not profile_sketch_id or not path_sketch_id:
+        raise Exception("Both profile_sketch_id and path_sketch_id are required")
+    
+    # Get profile
+    profile_sketch = get_sketch(profile_sketch_id)
+    if profile_index >= profile_sketch.profiles.count:
+        raise Exception(f"Profile index {profile_index} not found in sketch {profile_sketch_id}")
+    profile = profile_sketch.profiles.item(profile_index)
+    
+    # Get path - use first curve in the path sketch
+    path_sketch = get_sketch(path_sketch_id)
+    if path_sketch.sketchCurves.count == 0:
+        raise Exception(f"No curves found in path sketch {path_sketch_id}")
+    
+    # Create a path from the sketch curves
+    path = root.features.createPath(path_sketch.sketchCurves.item(0), False)
+    
+    # Create sweep feature
+    sweeps = root.features.sweepFeatures
+    
+    # Determine operation
+    op = adsk.fusion.FeatureOperations.NewBodyFeatureOperation
+    if operation == "join":
+        op = adsk.fusion.FeatureOperations.JoinFeatureOperation
+    elif operation == "cut":
+        op = adsk.fusion.FeatureOperations.CutFeatureOperation
+    elif operation == "intersect":
+        op = adsk.fusion.FeatureOperations.IntersectFeatureOperation
+    
+    sweep_input = sweeps.createInput(profile, path, op)
+    
+    # Set orientation
+    orientation = body.get("orientation", "perpendicular")
+    if orientation == "parallel":
+        sweep_input.orientation = adsk.fusion.SweepOrientationTypes.ParallelOrientationType
+    else:
+        sweep_input.orientation = adsk.fusion.SweepOrientationTypes.PerpendicularOrientationType
+    
+    # Set twist if provided
+    twist_angle = body.get("twist_angle")
+    if twist_angle:
+        sweep_input.twistAngle = adsk.core.ValueInput.createByReal(twist_angle * 3.14159265359 / 180.0)
+    
+    sweep = sweeps.add(sweep_input)
+    adsk.doEvents()
+    
+    body_name = sweep.bodies.item(0).name if sweep.bodies.count > 0 else "Unknown"
+    
+    return {
+        "feature_id": sweep.name,
+        "body_id": body_name
+    }
+
+
+def handle_revolve(body):
+    """Revolve a profile around an axis to create 3D geometry.
+    
+    Args:
+        sketch_id: Sketch containing the profile to revolve
+        profile_index: Profile index (default: 0)
+        axis: "x", "y", "z", or axis sketch line ID
+        axis_sketch_id: Sketch containing the axis line (if using sketch line)
+        angle: Angle in degrees (default: 360 for full revolution)
+        operation: new_body, join, cut, intersect (default: new_body)
+    """
+    root = get_root()
+    
+    sketch_id = body.get("sketch_id")
+    profile_index = body.get("profile_index", 0)
+    axis_type = body.get("axis", "x")
+    angle = body.get("angle", 360)
+    operation = body.get("operation", "new_body")
+    
+    if not sketch_id:
+        raise Exception("sketch_id is required")
+    
+    # Get profile
+    sketch = get_sketch(sketch_id)
+    if profile_index >= sketch.profiles.count:
+        raise Exception(f"Profile index {profile_index} not found in sketch {sketch_id}")
+    profile = sketch.profiles.item(profile_index)
+    
+    # Determine axis
+    axis = None
+    axis_sketch_id = body.get("axis_sketch_id")
+    axis_line_index = body.get("axis_line_index", 0)
+    
+    if axis_sketch_id:
+        # Use a line from another sketch as axis
+        axis_sketch = get_sketch(axis_sketch_id)
+        if axis_line_index < axis_sketch.sketchCurves.sketchLines.count:
+            axis = axis_sketch.sketchCurves.sketchLines.item(axis_line_index)
+    elif axis_type == "x":
+        axis = root.xConstructionAxis
+    elif axis_type == "y":
+        axis = root.yConstructionAxis
+    elif axis_type == "z":
+        axis = root.zConstructionAxis
+    else:
+        # Try to find a line in the profile sketch to use as axis
+        for i in range(sketch.sketchCurves.sketchLines.count):
+            line = sketch.sketchCurves.sketchLines.item(i)
+            if line.isConstruction:
+                axis = line
+                break
+    
+    if not axis:
+        raise Exception("Could not determine revolve axis. Specify axis or create a construction line.")
+    
+    # Determine operation
+    op = adsk.fusion.FeatureOperations.NewBodyFeatureOperation
+    if operation == "join":
+        op = adsk.fusion.FeatureOperations.JoinFeatureOperation
+    elif operation == "cut":
+        op = adsk.fusion.FeatureOperations.CutFeatureOperation
+    elif operation == "intersect":
+        op = adsk.fusion.FeatureOperations.IntersectFeatureOperation
+    
+    # Create revolve
+    revolves = root.features.revolveFeatures
+    revolve_input = revolves.createInput(profile, axis, op)
+    
+    # Set angle
+    angle_rad = angle * 3.14159265359 / 180.0
+    revolve_input.setAngleExtent(False, adsk.core.ValueInput.createByReal(angle_rad))
+    
+    revolve = revolves.add(revolve_input)
+    adsk.doEvents()
+    
+    body_name = revolve.bodies.item(0).name if revolve.bodies.count > 0 else "Unknown"
+    
+    return {
+        "feature_id": revolve.name,
+        "body_id": body_name
+    }
+
+
+def handle_create_sphere(body):
+    """Create a sphere primitive body.
+    
+    Args:
+        center: [x, y, z] center point in mm
+        radius: Radius in mm
+        name: Optional name for the body
+    """
+    root = get_root()
+    
+    center = body.get("center", [0, 0, 0])
+    radius = body.get("radius", 50)
+    name = body.get("name")
+    
+    # Create sphere using sketch + revolve approach
+    # Create a temporary sketch on XZ plane through the center
+    sketches = root.sketches
+    sketch = sketches.add(root.xZConstructionPlane)
+    sketch.name = "_temp_sphere_sketch"
+    
+    # Draw a semicircle
+    arcs = sketch.sketchCurves.sketchArcs
+    lines = sketch.sketchCurves.sketchLines
+    
+    # Center point (in cm)
+    cx = center[0] / 10.0
+    cy = center[1] / 10.0
+    cz = center[2] / 10.0
+    r = radius / 10.0
+    
+    # On XZ plane, Y becomes the vertical axis
+    # Draw arc from bottom to top
+    center_pt = adsk.core.Point3D.create(cx, cz, 0)
+    start_pt = adsk.core.Point3D.create(cx, cz - r, 0)
+    
+    import math
+    arc = arcs.addByCenterStartSweep(center_pt, start_pt, math.pi)  # 180 degree arc
+    
+    # Draw closing line (diameter)
+    end_pt = adsk.core.Point3D.create(cx, cz + r, 0)
+    line = lines.addByTwoPoints(start_pt, end_pt)
+    line.isConstruction = True  # Make it construction for the axis
+    
+    adsk.doEvents()
+    
+    # Get the profile
+    if sketch.profiles.count == 0:
+        raise Exception("Failed to create sphere profile")
+    
+    profile = sketch.profiles.item(0)
+    
+    # Revolve around the construction line (Y axis through center)
+    revolves = root.features.revolveFeatures
+    revolve_input = revolves.createInput(profile, line, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+    revolve_input.setAngleExtent(False, adsk.core.ValueInput.createByReal(2 * math.pi))  # 360 degrees
+    
+    revolve = revolves.add(revolve_input)
+    adsk.doEvents()
+    
+    # Get the created body
+    sphere_body = revolve.bodies.item(0)
+    if name:
+        sphere_body.name = name
+    
+    # Move sphere if center Y != 0 (since we created on XZ plane)
+    if center[1] != 0:
+        move_features = root.features.moveFeatures
+        bodies = adsk.core.ObjectCollection.create()
+        bodies.add(sphere_body)
+        move_input = move_features.createInput2(bodies)
+        transform = adsk.core.Matrix3D.create()
+        transform.translation = adsk.core.Vector3D.create(0, cy, 0)
+        move_input.defineAsFreeMove(transform)
+        move_features.add(move_input)
+    
+    # Clean up temp sketch
+    sketch.deleteMe()
+    
+    return {
+        "body_id": sphere_body.name,
+        "name": sphere_body.name,
+        "center": center,
+        "radius": radius
+    }
+
+
+def handle_create_cylinder(body):
+    """Create a cylinder primitive body.
+    
+    Args:
+        center: [x, y, z] center point of base in mm
+        radius: Radius in mm
+        height: Height in mm
+        axis: "x", "y", or "z" (default: "z")
+        name: Optional name for the body
+    """
+    root = get_root()
+    
+    center = body.get("center", [0, 0, 0])
+    radius = body.get("radius", 50)
+    height = body.get("height", 100)
+    axis = body.get("axis", "z")
+    name = body.get("name")
+    
+    # Convert mm to cm
+    cx = center[0] / 10.0
+    cy = center[1] / 10.0
+    cz = center[2] / 10.0
+    r = radius / 10.0
+    h = height / 10.0
+    
+    # Create an offset plane at the base Z position if needed
+    if axis == "z":
+        if abs(cz) > 0.001:
+            planes = root.constructionPlanes
+            plane_input = planes.createInput()
+            plane_input.setByOffset(root.xYConstructionPlane, adsk.core.ValueInput.createByReal(cz))
+            sketch_plane = planes.add(plane_input)
+        else:
+            sketch_plane = root.xYConstructionPlane
+        circle_center = adsk.core.Point3D.create(cx, cy, 0)
+    elif axis == "y":
+        # For Y-axis cylinder, sketch on XZ plane at the starting Y position
+        # XZ plane: sketch X = global X, sketch Y = global Z (note: might be inverted)
+        if abs(cy) > 0.001:
+            planes = root.constructionPlanes
+            plane_input = planes.createInput()
+            plane_input.setByOffset(root.xZConstructionPlane, adsk.core.ValueInput.createByReal(cy))
+            sketch_plane = planes.add(plane_input)
+        else:
+            sketch_plane = root.xZConstructionPlane
+        # On XZ plane, sketch Y maps to global -Z (inverted), so negate cz
+        circle_center = adsk.core.Point3D.create(cx, -cz, 0)
+    else:  # x axis
+        if abs(cx) > 0.001:
+            planes = root.constructionPlanes
+            plane_input = planes.createInput()
+            plane_input.setByOffset(root.yZConstructionPlane, adsk.core.ValueInput.createByReal(cx))
+            sketch_plane = planes.add(plane_input)
+        else:
+            sketch_plane = root.yZConstructionPlane
+        circle_center = adsk.core.Point3D.create(cy, cz, 0)
+    
+    # Create sketch
+    sketch = root.sketches.add(sketch_plane)
+    sketch.name = "_temp_cylinder_sketch"
+    
+    # Draw circle at center
+    circles = sketch.sketchCurves.sketchCircles
+    circle = circles.addByCenterRadius(circle_center, r)
+    adsk.doEvents()
+    
+    # Extrude
+    profile = sketch.profiles.item(0)
+    extrudes = root.features.extrudeFeatures
+    extrude_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+    extrude_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(h))
+    
+    extrude = extrudes.add(extrude_input)
+    adsk.doEvents()
+    
+    # Get the created body
+    cylinder_body = extrude.bodies.item(0)
+    if name:
+        cylinder_body.name = name
+    
+    # Clean up temp sketch
+    sketch.deleteMe()
+    
+    # Calculate actual bounds for verification
+    bbox = cylinder_body.boundingBox
+    actual_min = [round(bbox.minPoint.x * 10, 2), round(bbox.minPoint.y * 10, 2), round(bbox.minPoint.z * 10, 2)]
+    actual_max = [round(bbox.maxPoint.x * 10, 2), round(bbox.maxPoint.y * 10, 2), round(bbox.maxPoint.z * 10, 2)]
+    
+    return {
+        "body_id": cylinder_body.name,
+        "name": cylinder_body.name,
+        "center": center,
+        "radius": radius,
+        "height": height,
+        "axis": axis,
+        "actual_bounds": {
+            "min": actual_min,
+            "max": actual_max
+        }
+    }
+
+
+def handle_extrude_with_draft(body):
+    """Extrude a profile with a draft/taper angle.
+    
+    Args:
+        sketch_id: Sketch containing the profile
+        profile_index: Profile index (default: 0)
+        distance: Extrusion distance in mm
+        draft_angle: Taper angle in degrees (positive = outward, negative = inward)
+        direction: positive, negative, symmetric
+        operation: new_body, join, cut, intersect
+    """
+    root = get_root()
+    
+    sketch_id = body.get("sketch_id")
+    profile_index = body.get("profile_index", 0)
+    distance = body.get("distance", 10) / 10.0  # mm to cm
+    draft_angle = body.get("draft_angle", 0)  # degrees
+    direction = body.get("direction", "positive")
+    operation = body.get("operation", "new_body")
+    target_body_name = body.get("target_body")
+    
+    sketch = get_sketch(sketch_id)
+    profile = sketch.profiles.item(profile_index)
+    
+    if not profile:
+        raise Exception(f"Profile not found at index {profile_index}")
+    
+    # Determine operation
+    op = adsk.fusion.FeatureOperations.NewBodyFeatureOperation
+    if operation == "join":
+        op = adsk.fusion.FeatureOperations.JoinFeatureOperation
+    elif operation == "cut":
+        op = adsk.fusion.FeatureOperations.CutFeatureOperation
+    elif operation == "intersect":
+        op = adsk.fusion.FeatureOperations.IntersectFeatureOperation
+    
+    extrudes = root.features.extrudeFeatures
+    extrude_input = extrudes.createInput(profile, op)
+    
+    # Set target body for cut/join operations
+    if target_body_name and operation in ["join", "cut", "intersect"]:
+        target_body = find_body_by_name(root, target_body_name)
+        if target_body:
+            extrude_input.participantBodies = [target_body]
+    
+    # Set distance with taper
+    draft_rad = draft_angle * 3.14159265359 / 180.0
+    
+    if direction == "symmetric":
+        extent = adsk.fusion.DistanceExtentDefinition.create(adsk.core.ValueInput.createByReal(distance))
+        extrude_input.setSymmetricExtent(adsk.core.ValueInput.createByReal(distance), True)
+        # Note: symmetric with taper requires different approach
+        if draft_angle != 0:
+            extrude_input.taperAngle = adsk.core.ValueInput.createByReal(draft_rad)
+    else:
+        is_negative = direction == "negative"
+        extrude_input.setOneSideExtent(
+            adsk.fusion.DistanceExtentDefinition.create(adsk.core.ValueInput.createByReal(distance)),
+            adsk.fusion.ExtentDirections.NegativeExtentDirection if is_negative else adsk.fusion.ExtentDirections.PositiveExtentDirection
+        )
+        if draft_angle != 0:
+            extrude_input.taperAngle = adsk.core.ValueInput.createByReal(draft_rad)
+    
+    extrude = extrudes.add(extrude_input)
+    adsk.doEvents()
+    
+    body_name = extrude.bodies.item(0).name if extrude.bodies.count > 0 else target_body_name
+    
+    return {
+        "feature_id": extrude.name,
+        "body_id": body_name,
+        "draft_angle": draft_angle
+    }
+
+
+# ============================================================================
 # ROUTE TABLE
 # ============================================================================
+
+# ============================================================================
+# NEW IMPROVED TOOLS (Based on Project Learnings)
+# ============================================================================
+
+def handle_create_box(body):
+    """Create a box primitive body - much easier than sketch+extrude for boolean operations.
+    
+    Args:
+        corner1: [x, y, z] first corner in mm
+        corner2: [x, y, z] opposite corner in mm (or use center+dimensions)
+        center: [x, y, z] center point in mm (alternative to corner1/corner2)
+        width: Width (X) in mm (used with center)
+        depth: Depth (Y) in mm (used with center)
+        height: Height (Z) in mm (used with center)
+        name: Optional name for the body
+    """
+    root = get_root()
+    
+    # Determine box bounds
+    if body.get("center"):
+        center = body.get("center")
+        width = body.get("width", 100)
+        depth = body.get("depth", 100)
+        height = body.get("height", 100)
+        
+        # Calculate corners from center
+        corner1 = [
+            center[0] - width/2,
+            center[1] - depth/2,
+            center[2] - height/2
+        ]
+        corner2 = [
+            center[0] + width/2,
+            center[1] + depth/2,
+            center[2] + height/2
+        ]
+    else:
+        corner1 = body.get("corner1", [0, 0, 0])
+        corner2 = body.get("corner2", [100, 100, 100])
+        width = abs(corner2[0] - corner1[0])
+        depth = abs(corner2[1] - corner1[1])
+        height = abs(corner2[2] - corner1[2])
+    
+    name = body.get("name")
+    
+    # Create sketch on XY plane at the Z position of corner1
+    z_offset = min(corner1[2], corner2[2]) / 10.0  # cm
+    
+    # If Z is not 0, create offset plane
+    if abs(z_offset) > 0.001:
+        planes = root.constructionPlanes
+        plane_input = planes.createInput()
+        plane_input.setByOffset(root.xYConstructionPlane, adsk.core.ValueInput.createByReal(z_offset))
+        sketch_plane = planes.add(plane_input)
+    else:
+        sketch_plane = root.xYConstructionPlane
+    
+    # Create sketch and draw rectangle
+    sketch = root.sketches.add(sketch_plane)
+    sketch.name = "_temp_box_sketch"
+    
+    lines = sketch.sketchCurves.sketchLines
+    
+    # Rectangle corners in cm (on XY plane)
+    c1 = adsk.core.Point3D.create(corner1[0] / 10.0, corner1[1] / 10.0, 0)
+    c2 = adsk.core.Point3D.create(corner2[0] / 10.0, corner2[1] / 10.0, 0)
+    
+    lines.addTwoPointRectangle(c1, c2)
+    adsk.doEvents()
+    
+    # Extrude
+    profile = sketch.profiles.item(0)
+    extrudes = root.features.extrudeFeatures
+    extrude_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+    extrude_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(height / 10.0))
+    
+    extrude = extrudes.add(extrude_input)
+    adsk.doEvents()
+    
+    # Get the created body
+    box_body = extrude.bodies.item(0)
+    if name:
+        box_body.name = name
+    
+    # Clean up temp sketch
+    sketch.deleteMe()
+    
+    return {
+        "body_id": box_body.name,
+        "name": box_body.name,
+        "corner1": corner1,
+        "corner2": corner2,
+        "dimensions": {
+            "width": width,
+            "depth": depth,
+            "height": height
+        }
+    }
+
+
+def handle_list_sketches(body):
+    """List all sketches in the design with their plane information.
+    
+    Returns sketch names, plane info, profile counts, and 3D position hints.
+    """
+    root = get_root()
+    
+    sketches = []
+    
+    def get_sketch_info(sketch, component_name="root"):
+        """Extract info from a sketch."""
+        plane = sketch.referencePlane
+        
+        # Try to determine plane orientation
+        plane_info = "unknown"
+        try:
+            if hasattr(plane, 'geometry'):
+                geo = plane.geometry
+                if hasattr(geo, 'normal'):
+                    n = geo.normal
+                    if abs(n.z) > 0.9:
+                        plane_info = "XY (horizontal)"
+                    elif abs(n.y) > 0.9:
+                        plane_info = "XZ (vertical-front)"
+                    elif abs(n.x) > 0.9:
+                        plane_info = "YZ (vertical-side)"
+                    else:
+                        plane_info = f"Custom [{round(n.x,2)}, {round(n.y,2)}, {round(n.z,2)}]"
+                if hasattr(geo, 'origin'):
+                    o = geo.origin
+                    plane_info += f" at origin [{round(o.x*10,1)}, {round(o.y*10,1)}, {round(o.z*10,1)}] mm"
+        except:
+            pass
+        
+        return {
+            "sketch_id": sketch.name,
+            "name": sketch.name,
+            "component": component_name,
+            "profile_count": sketch.profiles.count,
+            "curve_count": sketch.sketchCurves.count,
+            "plane_info": plane_info,
+            "is_fully_constrained": sketch.isFullyConstrained if hasattr(sketch, 'isFullyConstrained') else None
+        }
+    
+    # Root sketches
+    for sketch in root.sketches:
+        sketches.append(get_sketch_info(sketch, "root"))
+    
+    # Component sketches
+    for occ in root.allOccurrences:
+        comp_name = occ.component.name
+        for sketch in occ.component.sketches:
+            sketches.append(get_sketch_info(sketch, comp_name))
+    
+    return {
+        "sketches": sketches,
+        "count": len(sketches)
+    }
+
+
+def handle_create_hole(body):
+    """Create a hole (cylindrical cut) through a body - simpler than cylinder + boolean.
+    
+    Args:
+        body_id: Target body to cut the hole in
+        center: [x, y, z] center point of hole in mm (on the face where hole starts)
+        diameter: Hole diameter in mm
+        depth: Hole depth in mm (use large value for through-all)
+        axis: "x", "y", or "z" - direction of hole (default: z = vertical)
+        through_all: If True, cuts through the entire body (ignores depth)
+    """
+    root = get_root()
+    
+    body_id = body.get("body_id")
+    center = body.get("center", [0, 0, 0])
+    diameter = body.get("diameter", 10)
+    depth = body.get("depth", 100)
+    axis = body.get("axis", "z")
+    through_all = body.get("through_all", False)
+    
+    # Find target body
+    target_body = find_body_by_name(root, body_id)
+    if not target_body:
+        raise Exception(f"Body not found: {body_id}")
+    
+    # Get body bounds to help position the hole
+    bbox = target_body.boundingBox
+    
+    # Determine sketch plane based on axis
+    # For each axis, we create an offset plane at the hole start position,
+    # then extrude in the positive direction through the body
+    planes = root.constructionPlanes
+    
+    if axis == "z":
+        # Hole goes in Z direction - sketch on XY plane offset to hole start Z
+        base_plane = root.xYConstructionPlane
+        circle_center = adsk.core.Point3D.create(center[0] / 10.0, center[1] / 10.0, 0)
+        offset_distance = center[2] / 10.0  # Z position in cm
+        extrude_dir = "negative"  # Cut downward (-Z)
+        if through_all:
+            depth = (bbox.maxPoint.z - bbox.minPoint.z) * 10 + 20
+    elif axis == "y":
+        # Hole goes in Y direction - sketch on XZ plane
+        # Position sketch slightly BEFORE the body start to ensure intersection
+        base_plane = root.xZConstructionPlane
+        # On XZ plane, sketch Y maps to global -Z (inverted), so negate center[2]
+        circle_center = adsk.core.Point3D.create(center[0] / 10.0, -center[2] / 10.0, 0)
+        # Offset to just before the body's min Y (1mm margin)
+        offset_distance = (bbox.minPoint.y - 0.1)  # Already in cm, subtract 1mm
+        extrude_dir = "positive"  # Cut forward (+Y) from back to front
+        if through_all:
+            depth = (bbox.maxPoint.y - bbox.minPoint.y) * 10 + 20
+        else:
+            # Add margin to depth to account for offset
+            depth = depth + 1
+    else:  # x
+        # Hole goes in X direction - sketch on YZ plane offset to hole start X
+        base_plane = root.yZConstructionPlane
+        circle_center = adsk.core.Point3D.create(center[1] / 10.0, center[2] / 10.0, 0)
+        offset_distance = center[0] / 10.0  # X position in cm
+        extrude_dir = "positive"  # Cut in +X direction
+        if through_all:
+            depth = (bbox.maxPoint.x - bbox.minPoint.x) * 10 + 20
+    
+    # Create offset plane at the specified position
+    if abs(offset_distance) > 0.001:
+        plane_input = planes.createInput()
+        plane_input.setByOffset(base_plane, adsk.core.ValueInput.createByReal(offset_distance))
+        plane = planes.add(plane_input)
+    else:
+        plane = base_plane
+    
+    # Create sketch with circle
+    sketch = root.sketches.add(plane)
+    sketch.name = "_temp_hole_sketch"
+    
+    circles = sketch.sketchCurves.sketchCircles
+    circle = circles.addByCenterRadius(circle_center, diameter / 20.0)  # radius in cm
+    adsk.doEvents()
+    
+    # Extrude as cut
+    profile = sketch.profiles.item(0)
+    extrudes = root.features.extrudeFeatures
+    extrude_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.CutFeatureOperation)
+    extrude_input.participantBodies = [target_body]
+    
+    # Set extrusion direction
+    if extrude_dir == "positive":
+        extent_direction = adsk.fusion.ExtentDirections.PositiveExtentDirection
+    else:
+        extent_direction = adsk.fusion.ExtentDirections.NegativeExtentDirection
+    
+    if through_all:
+        extrude_input.setAllExtent(extent_direction)
+    else:
+        extrude_input.setOneSideExtent(
+            adsk.fusion.DistanceExtentDefinition.create(adsk.core.ValueInput.createByReal(depth / 10.0)),
+            extent_direction
+        )
+    
+    extrude = extrudes.add(extrude_input)
+    adsk.doEvents()
+    
+    # Clean up temp sketch
+    sketch.deleteMe()
+    
+    return {
+        "success": True,
+        "body_id": body_id,
+        "hole_center": center,
+        "hole_diameter": diameter,
+        "hole_depth": depth if not through_all else "through_all"
+    }
+
+
+def handle_get_body_center(body):
+    """Get the center point and bounding box of a body.
+    
+    Useful for positioning cuts, holes, and other operations relative to existing geometry.
+    """
+    root = get_root()
+    
+    body_id = body.get("body_id")
+    
+    target_body = find_body_by_name(root, body_id)
+    if not target_body:
+        raise Exception(f"Body not found: {body_id}")
+    
+    bbox = target_body.boundingBox
+    
+    # Calculate center
+    center = [
+        round((bbox.minPoint.x + bbox.maxPoint.x) / 2 * 10, 2),  # cm to mm
+        round((bbox.minPoint.y + bbox.maxPoint.y) / 2 * 10, 2),
+        round((bbox.minPoint.z + bbox.maxPoint.z) / 2 * 10, 2)
+    ]
+    
+    # Calculate dimensions
+    width = round((bbox.maxPoint.x - bbox.minPoint.x) * 10, 2)
+    depth = round((bbox.maxPoint.y - bbox.minPoint.y) * 10, 2)
+    height = round((bbox.maxPoint.z - bbox.minPoint.z) * 10, 2)
+    
+    return {
+        "body_id": body_id,
+        "center": center,
+        "bounding_box": {
+            "min": [round(bbox.minPoint.x * 10, 2), round(bbox.minPoint.y * 10, 2), round(bbox.minPoint.z * 10, 2)],
+            "max": [round(bbox.maxPoint.x * 10, 2), round(bbox.maxPoint.y * 10, 2), round(bbox.maxPoint.z * 10, 2)]
+        },
+        "dimensions": {
+            "width": width,
+            "depth": depth,
+            "height": height
+        },
+        "volume_mm3": round(target_body.volume * 1000, 2)
+    }
+
+
+def handle_sketch_to_3d_coords(body):
+    """Convert 2D sketch coordinates to 3D world coordinates.
+    
+    This helps understand where sketch geometry will end up in 3D space.
+    Essential for positioning cuts and joins correctly.
+    
+    Args:
+        sketch_id: The sketch name
+        points: List of [x, y] 2D points to convert
+    """
+    sketch = get_sketch(body["sketch_id"])
+    
+    points_2d = body.get("points", [[0, 0]])
+    
+    # Get the sketch plane transform
+    plane = sketch.referencePlane
+    transform = sketch.transform
+    
+    results = []
+    for pt_2d in points_2d:
+        # Create 2D point and transform to 3D
+        pt = adsk.core.Point3D.create(pt_2d[0] / 10.0, pt_2d[1] / 10.0, 0)
+        pt.transformBy(transform)
+        
+        results.append({
+            "input_2d": pt_2d,
+            "output_3d": [round(pt.x * 10, 2), round(pt.y * 10, 2), round(pt.z * 10, 2)]
+        })
+    
+    # Also return general plane info
+    plane_info = {}
+    try:
+        if hasattr(plane, 'geometry'):
+            geo = plane.geometry
+            if hasattr(geo, 'normal'):
+                plane_info["normal"] = [geo.normal.x, geo.normal.y, geo.normal.z]
+            if hasattr(geo, 'origin'):
+                plane_info["origin_mm"] = [geo.origin.x * 10, geo.origin.y * 10, geo.origin.z * 10]
+    except:
+        pass
+    
+    return {
+        "sketch_id": body["sketch_id"],
+        "plane_info": plane_info,
+        "coordinate_mapping": results,
+        "note": "2D sketch coords [x, y] map to 3D coords based on plane orientation"
+    }
+
 
 def handle_get_all_parts(body):
     """Get all parts/bodies from all components with dimensions."""
@@ -2933,18 +3796,31 @@ ROUTES = {
     "/import_svg": handle_import_svg,
     "/add_text": handle_add_text,
     "/delete_sketch": handle_delete_sketch,
+    "/list_sketches": handle_list_sketches,
+    "/sketch_to_3d_coords": handle_sketch_to_3d_coords,
     
     # 3D Features
     "/extrude": handle_extrude,
+    "/extrude_with_draft": handle_extrude_with_draft,
     "/fillet_edges": handle_fillet_edges,
     "/chamfer_edges": handle_chamfer_edges,
     "/boolean": handle_boolean,
+    
+    # Organic Modeling & Primitives
+    "/loft": handle_loft,
+    "/sweep": handle_sweep,
+    "/revolve": handle_revolve,
+    "/create_sphere": handle_create_sphere,
+    "/create_cylinder": handle_create_cylinder,
+    "/create_box": handle_create_box,
+    "/create_hole": handle_create_hole,
     
     # Selection & Query
     "/list_bodies": handle_list_bodies,
     "/list_edges": handle_list_edges,
     "/list_faces": handle_list_faces,
     "/select_by_position": handle_select_by_position,
+    "/get_body_center": handle_get_body_center,
     
     # Delete
     "/delete_body": handle_delete_body,
