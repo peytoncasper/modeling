@@ -16,6 +16,12 @@ import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
 
+# Import frame manager
+try:
+    from .frame_manager import FrameManager
+except ImportError:
+    from frame_manager import FrameManager
+
 # Globals
 app = None
 ui = None
@@ -23,6 +29,7 @@ server = None
 server_thread = None
 custom_event = None
 custom_event_handler = None
+frame_manager = None
 
 # For marshaling ALL calls to main thread
 pending_command = None
@@ -1248,9 +1255,18 @@ def handle_list_edges(body):
     root = get_root()
     body_id = body.get("body_id")
     filter_opts = body.get("filter", {})
+    component_name = body.get("component")
+    
+    # Get target component
+    if component_name:
+        target_component, target_occ = get_component_by_name(component_name)
+        if not target_component:
+            raise Exception(f"Component not found: {component_name}")
+    else:
+        target_component = root
     
     target_body = None
-    for b in root.bRepBodies:
+    for b in target_component.bRepBodies:
         if b.name == body_id:
             target_body = b
             break
@@ -4019,7 +4035,14 @@ def handle_list_sketches(body):
     
     def get_sketch_info(sketch, component_name="root"):
         """Extract info from a sketch."""
-        plane = sketch.referencePlane
+        try:
+            plane = sketch.referencePlane
+        except:
+            # Some sketches have invalid reference planes (e.g., deleted planes)
+            return None
+        
+        if not plane:
+            return None
         
         # Determine plane orientation and get coordinate mapping
         plane_type = "unknown"
@@ -4070,13 +4093,17 @@ def handle_list_sketches(body):
     
     # Root sketches
     for sketch in root.sketches:
-        sketches.append(get_sketch_info(sketch, "root"))
+        info = get_sketch_info(sketch, "root")
+        if info:
+            sketches.append(info)
     
     # Component sketches
     for occ in root.allOccurrences:
         comp_name = occ.component.name
         for sketch in occ.component.sketches:
-            sketches.append(get_sketch_info(sketch, comp_name))
+            info = get_sketch_info(sketch, comp_name)
+            if info:
+                sketches.append(info)
     
     return {
         "sketches": sketches,
@@ -4813,6 +4840,152 @@ def handle_delete_component(body):
         raise Exception(f"Failed to delete component: {str(e)}")
 
 
+# ============ Frame Management ============
+
+def handle_create_frame(body):
+    """Create a new reference frame."""
+    global frame_manager
+    try:
+        frame = frame_manager.create_frame(
+            name=body.get('name'),
+            type=body.get('type'),
+            origin=body.get('origin'),
+            orientation=body.get('orientation', {"x": 0, "y": 0, "z": 0}),
+            parent=body.get('parent'),
+            metadata=body.get('metadata')
+        )
+        return {"success": True, "frame": frame.to_dict()}
+    except Exception as e:
+        return {"error": True, "message": str(e)}
+
+
+def handle_get_frame(body):
+    """Get frame information."""
+    global frame_manager
+    frame_name = body.get('name')
+    frame = frame_manager.get_frame(frame_name)
+    
+    if not frame:
+        return {"error": True, "message": f"Frame {frame_name} not found"}
+    
+    result = frame.to_dict()
+    
+    if body.get('include_children'):
+        result['children_details'] = [
+            frame_manager.get_frame(child).to_dict()
+            for child in frame.children
+            if frame_manager.get_frame(child)
+        ]
+    
+    if body.get('include_mates'):
+        result['mating_frames'] = frame_manager.get_mating_frames(frame_name)
+    
+    return result
+
+
+def handle_list_frames(body):
+    """List all frames."""
+    global frame_manager
+    filter_type = body.get('filter', {}).get('type') if body.get('filter') else None
+    frames = frame_manager.list_frames(filter_type)
+    
+    return {
+        "frames": [f.to_dict() for f in frames],
+        "count": len(frames)
+    }
+
+
+def handle_delete_frame(body):
+    """Delete a frame."""
+    global frame_manager
+    frame_name = body.get('name')
+    frame_manager.delete_frame(frame_name)
+    return {"success": True}
+
+
+def handle_transform_point(body):
+    """Transform point between frames."""
+    global frame_manager
+    try:
+        point = body.get('point')
+        from_frame = body.get('from_frame')
+        to_frame = body.get('to_frame')
+        
+        result = frame_manager.transform_point_between_frames(point, from_frame, to_frame)
+        
+        return {
+            "point": result,
+            "from_frame": from_frame,
+            "to_frame": to_frame
+        }
+    except Exception as e:
+        return {"error": True, "message": str(e)}
+
+
+def handle_create_body_frame(body):
+    """Automatically create frame for a body."""
+    global frame_manager, app
+    body_name = body.get('body_name')
+    component = body.get('component')
+    
+    try:
+        design = adsk.fusion.Design.cast(app.activeProduct)
+        if not design:
+            return {"error": True, "message": "No active design"}
+        
+        # Find the body
+        target_body = None
+        if component:
+            comp, occ = get_component_by_name(component)
+            if comp:
+                for body_obj in comp.bRepBodies:
+                    if body_obj.name == body_name:
+                        target_body = body_obj
+                        break
+        else:
+            for body_obj in design.rootComponent.bRepBodies:
+                if body_obj.name == body_name:
+                    target_body = body_obj
+                    break
+        
+        if not target_body:
+            return {"error": True, "message": f"Body {body_name} not found"}
+        
+        # Get bounds (Fusion API returns cm, convert to mm)
+        bbox = target_body.boundingBox
+        bounds_min = [bbox.minPoint.x * 10, bbox.minPoint.y * 10, bbox.minPoint.z * 10]
+        bounds_max = [bbox.maxPoint.x * 10, bbox.maxPoint.y * 10, bbox.maxPoint.z * 10]
+        
+        frame = frame_manager.create_body_frame(
+            body_name=body_name,
+            bounds_min=bounds_min,
+            bounds_max=bounds_max,
+            volume=target_body.volume * 1000,  # cm³ to mm³
+            component=component
+        )
+        
+        return {"success": True, "frame": frame.to_dict()}
+    except Exception as e:
+        return {"error": True, "message": str(e), "traceback": traceback.format_exc()}
+
+
+def handle_create_interface_frame(body):
+    """Create interface frame for joints."""
+    global frame_manager
+    try:
+        frame = frame_manager.create_interface_frame(
+            parent_frame=body.get('parent_frame'),
+            name=body.get('name'),
+            origin=body.get('origin'),
+            normal=body.get('normal'),
+            mates_with=body.get('mates_with'),
+            metadata=body.get('metadata')
+        )
+        return {"success": True, "frame": frame.to_dict()}
+    except Exception as e:
+        return {"error": True, "message": str(e)}
+
+
 ROUTES = {
     # Document
     "/ping": handle_ping,
@@ -4914,6 +5087,15 @@ ROUTES = {
     # Workspace
     "/switch_workspace": handle_switch_workspace,
     
+    # Frame Management
+    "/create_frame": handle_create_frame,
+    "/get_frame": handle_get_frame,
+    "/list_frames": handle_list_frames,
+    "/delete_frame": handle_delete_frame,
+    "/transform_point": handle_transform_point,
+    "/create_body_frame": handle_create_body_frame,
+    "/create_interface_frame": handle_create_interface_frame,
+    
     # CAM
     "/cam_list_setups": handle_cam_list_setups,
     "/cam_create_setup": handle_cam_create_setup,
@@ -4946,11 +5128,14 @@ def start_server():
 
 
 def run(context):
-    global app, ui, server_thread, custom_event, custom_event_handler
+    global app, ui, server_thread, custom_event, custom_event_handler, frame_manager
 
     try:
         app = adsk.core.Application.get()
         ui = app.userInterface
+
+        # Initialize frame manager
+        frame_manager = FrameManager()
 
         # Register custom event for ALL commands (thread safety)
         custom_event = app.registerCustomEvent("FusionMCPCommandEvent")

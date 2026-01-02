@@ -42,12 +42,25 @@ Instead of specialized tools for each operation, this library teaches you to use
 4. If something fails, refer back to the pattern's "Common Mistakes" section
 ```
 
+## 🎯 Frame System (Coming Soon)
+
+The **reference frame system** will provide persistent spatial context for CAD operations, making cross-body operations reliable and predictable.
+
+**Key Benefits:**
+- Automatic coordinate conversions (no more XZ/YZ confusion)
+- Pre-validation of operations (no more orphan bodies)
+- Explicit tracking of body relationships
+- Reduced cognitive load
+
+📖 **See:** `frames-for-cross-body-operations.md` for details
+
 ## Pattern Index
 
 | Pattern | File | When to Read |
 |---------|------|--------------|
 | **Coordinate Systems** | `coordinate-systems.md` | ⚠️ ALWAYS read first for XZ/YZ planes |
 | **Join Operations** | `join-operations.md` | Before any cut/join extrusion |
+| **Frame-Based Operations** | `frames-for-cross-body-operations.md` | 🚀 Next-gen approach using frames |
 | **Lidded Box** | `lidded-box.md` | ✨ Classic keepsake box with overhanging lid |
 | **Panel Construction** | `panel-construction.md` | Building boxes from flat panels |
 | **Box Joints** | `box-joints.md` | Finger/box joints (high-strength applications) |
