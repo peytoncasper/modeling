@@ -1,0 +1,465 @@
+{
+  "high_revenue_products": [
+    {
+      "shop": "MontiqueCrafts",
+      "product": "Personalized Serving Board for Couple, Marble Wood Cheese Board",
+      "price": 129.18,
+      "monthly_sales": 1158,
+      "monthly_revenue": 149590,
+      "growth_rate": "92%",
+      "total_sales": 2922,
+      "reviews": 574,
+      "listing_age_months": 11,
+      "search_term": "custom engraved wood",
+      "category": "cnc_laser_products",
+      "subcategory": "custom_engraved",
+      "total_listings": 101516
+    },
+    {
+      "shop": "WoodDora",
+      "product": "Custom Epoxy Table, Rustic Dining Table",
+      "price": 2750.0,
+      "monthly_sales": 19,
+      "monthly_revenue": 52250,
+      "growth_rate": "0%",
+      "total_sales": 19,
+      "reviews": 3,
+      "listing_age_months": 2,
+      "search_term": "epoxy resin table",
+      "category": "resin_wood_combinations",
+      "subcategory": "epoxy_tables",
+      "total_listings": 61638
+    },
+    {
+      "shop": "OwlCreationDesign",
+      "product": "Handmade live edge bathroom vanity modern wood vanity cabinet",
+      "price": 4088.0,
+      "monthly_sales": 11,
+      "monthly_revenue": 44968,
+      "growth_rate": "0%",
+      "total_sales": 9,
+      "reviews": 1,
+      "listing_age_months": 4,
+      "search_term": "bathroom organizer wood",
+      "category": "branch",
+      "subcategory": "bathroom_organizers",
+      "total_listings": 4457
+    },
+    {
+      "shop": "LuminaraLuxe",
+      "product": "Personalized Glass Charcuterie Board, Epoxy River Resin Cutting Board",
+      "price": 79.99,
+      "monthly_sales": 398,
+      "monthly_revenue": 40236,
+      "growth_rate": "69%",
+      "total_sales": 2489,
+      "reviews": 417,
+      "listing_age_months": 12,
+      "search_term": "wood cutting board custom",
+      "category": "kitchen_products",
+      "subcategory": "cutting_boards",
+      "total_listings": 22221
+    },
+    {
+      "shop": "SicilianElegance",
+      "product": "Personalized serving board for couple or family gift",
+      "price": 57.5,
+      "monthly_sales": 617,
+      "monthly_revenue": 35478,
+      "growth_rate": "62%",
+      "total_sales": 1745,
+      "reviews": 377,
+      "listing_age_months": 11,
+      "search_term": "custom engraved wood",
+      "category": "cnc_laser_products",
+      "subcategory": "custom_engraved",
+      "total_listings": 101516
+    },
+    {
+      "shop": "ModWoodCo",
+      "product": "Nursery Name Sign | Nursery Decor | Wooden Name Cutout",
+      "price": 121.61,
+      "monthly_sales": 250,
+      "monthly_revenue": 30403,
+      "growth_rate": "13%",
+      "total_sales": 18124,
+      "reviews": 3935,
+      "listing_age_months": 100,
+      "search_term": "wood wall art custom",
+      "category": "home_decor",
+      "subcategory": "wall_art",
+      "total_listings": 47962
+    },
+    {
+      "shop": "Hirosart",
+      "product": "ANIME Night Lamp Epoxy lamp handmade from wood and resin",
+      "price": 137.25,
+      "monthly_sales": 199,
+      "monthly_revenue": 27313,
+      "growth_rate": "67%",
+      "total_sales": 984,
+      "reviews": 201,
+      "listing_age_months": 21,
+      "search_term": "resin lamp night light",
+      "category": "resin_wood_combinations",
+      "subcategory": "resin_lamps",
+      "total_listings": 81307
+    },
+    {
+      "shop": "PopCardsByHa",
+      "product": "Custom Ocean Epoxy Resin Table, Live Edge Wood Dining Table",
+      "price": 1488.0,
+      "monthly_sales": 18,
+      "monthly_revenue": 26784,
+      "growth_rate": "0%",
+      "total_sales": 26,
+      "reviews": 6,
+      "listing_age_months": 5,
+      "search_term": "epoxy resin table",
+      "category": "resin_wood_combinations",
+      "subcategory": "epoxy_tables",
+      "total_listings": 61638
+    },
+    {
+      "shop": "BreakWooden",
+      "product": "Round Live Edge Resin Coffee Table Walnut Side Table",
+      "price": 158.66,
+      "monthly_sales": 148,
+      "monthly_revenue": 23482,
+      "growth_rate": "75%",
+      "total_sales": 548,
+      "reviews": 157,
+      "listing_age_months": 20,
+      "search_term": "epoxy resin table",
+      "category": "resin_wood_combinations",
+      "subcategory": "epoxy_tables",
+      "total_listings": 61638
+    },
+    {
+      "shop": "BreakWooden",
+      "product": "Hollow Knight Resin Lamp: Anime Night Light",
+      "price": 158.66,
+      "monthly_sales": 148,
+      "monthly_revenue": 23482,
+      "growth_rate": "75%",
+      "total_sales": 548,
+      "reviews": 157,
+      "listing_age_months": 20,
+      "search_term": "resin lamp night light",
+      "category": "resin_wood_combinations",
+      "subcategory": "resin_lamps",
+      "total_listings": 81307
+    },
+    {
+      "shop": "ColorfulLifers",
+      "product": "Custom Engraved Wooden Jewelry Box with Drawers",
+      "price": 134.58,
+      "monthly_sales": 168,
+      "monthly_revenue": 22609,
+      "growth_rate": "30%",
+      "total_sales": 2580,
+      "reviews": 341,
+      "listing_age_months": 25,
+      "search_term": "custom engraved wood",
+      "category": "cnc_laser_products",
+      "subcategory": "custom_engraved",
+      "total_listings": 101516
+    },
+    {
+      "shop": "EngraveMyMemories",
+      "product": "Personalized Serving Board for Couple, Marble Wood Cheese Board",
+      "price": 59.95,
+      "monthly_sales": 117,
+      "monthly_revenue": 22571,
+      "growth_rate": "25%",
+      "total_sales": 2406,
+      "reviews": 499,
+      "listing_age_months": 17,
+      "search_term": "wood cutting board custom",
+      "category": "kitchen_products",
+      "subcategory": "cutting_boards",
+      "total_listings": 22221
+    },
+    {
+      "shop": "Back40life",
+      "product": "Custom Wooden Growth Chart for Kids - Personalized Height Measuring Stick",
+      "price": 159.97,
+      "monthly_sales": 101,
+      "monthly_revenue": 19173,
+      "growth_rate": "75%",
+      "total_sales": 1519,
+      "reviews": 222,
+      "listing_age_months": 21,
+      "search_term": "wood wall art custom",
+      "category": "home_decor",
+      "subcategory": "wall_art",
+      "total_listings": 47962
+    },
+    {
+      "shop": "MrChuahStore",
+      "product": "TOTK Resin Wood Night Light Christmas Gift for Game fans",
+      "price": 96.32,
+      "monthly_sales": 192,
+      "monthly_revenue": 18493,
+      "growth_rate": "57%",
+      "total_sales": 1820,
+      "reviews": 379,
+      "listing_age_months": 18,
+      "search_term": "resin lamp night light",
+      "category": "resin_wood_combinations",
+      "subcategory": "resin_lamps",
+      "total_listings": 81307
+    },
+    {
+      "shop": "austero",
+      "product": "Custom Photo on Wood, Engraved Photo on Wood with Watercolor Style",
+      "price": 56.95,
+      "monthly_sales": 321,
+      "monthly_revenue": 18281,
+      "growth_rate": "78%",
+      "total_sales": 30416,
+      "reviews": 8323,
+      "listing_age_months": 53,
+      "search_term": "wood wall art custom",
+      "category": "home_decor",
+      "subcategory": "wall_art",
+      "total_listings": 47962
+    },
+    {
+      "shop": "SHANIKStore",
+      "product": "Personalized 8 Slot Wooden Watch Box Acrylic Lid Detachable Stands",
+      "price": 349.99,
+      "monthly_sales": 43,
+      "monthly_revenue": 16920,
+      "growth_rate": "200%",
+      "total_sales": 81,
+      "reviews": 10,
+      "listing_age_months": 2,
+      "search_term": "watch box wood display",
+      "category": "branch",
+      "subcategory": "watch_boxes",
+      "total_listings": 1450
+    },
+    {
+      "shop": "UrbanEngravings",
+      "product": "Personalized Marble Wood Cutting Board with Coaster",
+      "price": 57.42,
+      "monthly_sales": 263,
+      "monthly_revenue": 15101,
+      "growth_rate": "44%",
+      "total_sales": 2269,
+      "reviews": 414,
+      "listing_age_months": 14,
+      "search_term": "wood cutting board custom",
+      "category": "kitchen_products",
+      "subcategory": "cutting_boards",
+      "total_listings": 22221
+    },
+    {
+      "shop": "LampByGift",
+      "product": "Personalized Gaming Controller and Headphone Stand",
+      "price": 61.99,
+      "monthly_sales": 227,
+      "monthly_revenue": 14072,
+      "growth_rate": "500%",
+      "total_sales": 1861,
+      "reviews": 277,
+      "listing_age_months": 13,
+      "search_term": "gaming controller stand",
+      "category": "gaming_accessories",
+      "subcategory": "controller_stands",
+      "total_listings": 6540
+    },
+    {
+      "shop": "ProMirror",
+      "product": "Handmade Walnut Wood Framed Mirror, Asymmetric Organic Mirror",
+      "price": 209.0,
+      "monthly_sales": 18,
+      "monthly_revenue": 11091,
+      "growth_rate": "0%",
+      "total_sales": 305,
+      "reviews": 65,
+      "listing_age_months": 16,
+      "search_term": "bathroom organizer wood",
+      "category": "branch",
+      "subcategory": "bathroom_organizers",
+      "total_listings": 4457
+    },
+    {
+      "shop": "GunView",
+      "product": "Workbench Toolbox Pen Holder \u2013 Tool Box Organizer for Desk",
+      "price": 29.99,
+      "monthly_sales": 316,
+      "monthly_revenue": 9477,
+      "growth_rate": "350%",
+      "total_sales": 1784,
+      "reviews": 307,
+      "listing_age_months": 9,
+      "search_term": "3D printed desk accessory",
+      "category": "3d_printing",
+      "subcategory": "desk_accessories",
+      "total_listings": 9806
+    }
+  ],
+  "low_competition_searches": [
+    [
+      "cnc shower caddy",
+      1
+    ],
+    [
+      "cnc towel rack",
+      34
+    ],
+    [
+      "cnc bookend",
+      96
+    ],
+    [
+      "cnc pegboard",
+      101
+    ],
+    [
+      "cnc garden planter",
+      103
+    ],
+    [
+      "wood shower caddy",
+      115
+    ],
+    [
+      "personalized workshop organizer",
+      128
+    ],
+    [
+      "personalized pegboard",
+      131
+    ],
+    [
+      "cnc floating shelf",
+      131
+    ],
+    [
+      "cnc plant stand",
+      151
+    ],
+    [
+      "cnc workshop organizer",
+      199
+    ],
+    [
+      "cnc wine rack",
+      225
+    ],
+    [
+      "cnc tech",
+      253
+    ],
+    [
+      "personalized plant stand",
+      286
+    ],
+    [
+      "wood workshop organizer",
+      304
+    ],
+    [
+      "custom workshop organizer",
+      311
+    ],
+    [
+      "cnc tool holder",
+      392
+    ],
+    [
+      "custom shower caddy",
+      441
+    ],
+    [
+      "custom pegboard",
+      448
+    ]
+  ],
+  "medium_competition_searches": [
+    [
+      "personalized wine rack",
+      537
+    ],
+    [
+      "personalized shower caddy",
+      546
+    ],
+    [
+      "personalized floating shelf",
+      557
+    ],
+    [
+      "wood pegboard",
+      605
+    ],
+    [
+      "personalized towel rack",
+      608
+    ],
+    [
+      "cnc nursery decor",
+      685
+    ],
+    [
+      "laser cut tech",
+      725
+    ],
+    [
+      "cnc kids toy",
+      778
+    ],
+    [
+      "cnc picture frame",
+      781
+    ],
+    [
+      "custom towel rack",
+      826
+    ],
+    [
+      "custom wine rack",
+      1020
+    ],
+    [
+      "custom plant stand",
+      1135
+    ],
+    [
+      "personalized garden planter",
+      1787
+    ],
+    [
+      "personalized tool holder",
+      1933
+    ],
+    [
+      "cnc storage",
+      2412
+    ],
+    [
+      "cnc office",
+      2555
+    ],
+    [
+      "custom garden planter",
+      3156
+    ],
+    [
+      "custom tool holder",
+      3324
+    ],
+    [
+      "personalized bookend",
+      3448
+    ],
+    [
+      "wood tool holder",
+      3603
+    ]
+  ],
+  "analysis_date": "2026-01-01T15:09:13.421533"
+}

@@ -1,0 +1,163 @@
+id,term,category,subcategory,total_listings,competition_level,created_at
+1,3D printed phone stand,3D Printed Products,phone_stands,2979,,2026-01-02 14:38:16
+2,3D printed desk accessory,3D Printed Products,desk_accessories,9806,,2026-01-02 14:38:16
+3,3D printed organizer,3D Printed Products,organizers,1387,,2026-01-02 14:38:16
+4,resin wood coaster,Resin + Wood Hybrid Products,coasters,2979,,2026-01-02 14:38:16
+5,resin art coaster,Resin + Wood Hybrid Products,resin_art_coasters,10055,,2026-01-02 14:38:16
+6,epoxy resin table,Resin + Wood Hybrid Products,epoxy_tables,61638,,2026-01-02 14:38:16
+7,resin lamp night light,Resin + Wood Hybrid Products,resin_lamps,81307,,2026-01-02 14:38:16
+8,CNC wood sign custom,CNC & Laser Cut Products,cnc_wood_signs,2576,,2026-01-02 14:38:16
+9,laser cut wood art,CNC & Laser Cut Products,laser_cut_art,910,,2026-01-02 14:38:16
+10,custom engraved wood,CNC & Laser Cut Products,custom_engraved,101516,,2026-01-02 14:38:16
+11,gaming controller stand,Gaming Accessories,controller_stands,6540,,2026-01-02 14:38:16
+12,cable organizer desk,Tech Accessories,cable_organizers,1387,,2026-01-02 14:38:16
+13,wood cutting board custom,Kitchen Products,cutting_boards,22221,,2026-01-02 14:38:16
+14,wood wall art custom,Home Decor,wall_art,47962,,2026-01-02 14:38:16
+15,Custom 3D Topographic/Lake Maps,wall_art,,,,2026-01-02 14:38:16
+16,Custom Business/Family Name Signs,wall_decor,,,,2026-01-02 14:38:16
+17,Premium Wood Watch/Jewelry Boxes,storage_organization,,,,2026-01-02 14:38:16
+18,Live Edge Charcuterie Boards & Serving Trays,kitchen_dining,,,,2026-01-02 14:38:16
+19,Wood Desk Organizers & Docking Stations,office_organization,,,,2026-01-02 14:38:16
+20,bathroom organizer wood,branch,bathroom_organizers,4457,,2026-01-02 14:38:16
+21,watch box wood display,branch,watch_boxes,1450,,2026-01-02 14:38:16
+22,gaming keyboard stand wood,branch,gaming_keyboard_stands,49,,2026-01-02 14:38:16
+23,pet memorial urn wood,branch,pet_memorial_urns,2606,,2026-01-02 14:38:16
+24,floating shelf wood wall,branch,floating_shelves,2606,,2026-01-02 14:38:16
+25,wedding place card holder,wedding,,5038,,2026-01-02 14:38:16
+26,wedding table number holder,wedding,,3411,,2026-01-02 14:38:16
+27,wedding bar sign wood,wedding,,2293,,2026-01-02 14:38:16
+28,wedding menu sign wood,wedding,,716,,2026-01-02 14:38:16
+29,wedding ceremony sign wood,wedding,,2486,,2026-01-02 14:38:16
+30,wedding ring bearer box,wedding,,11871,,2026-01-02 14:38:16
+31,wedding memory box wood,wedding,,3725,,2026-01-02 14:38:16
+32,wedding keepsake box wood,wedding,,6608,,2026-01-02 14:38:16
+33,wedding money box wood,wedding,,724,,2026-01-02 14:38:16
+34,wedding wishing well wood,wedding,,137,,2026-01-02 14:38:16
+35,wedding card tree wood,wedding,,385,,2026-01-02 14:38:16
+36,wedding unity candle box,wedding,,306,,2026-01-02 14:38:16
+37,wedding sand ceremony box,wedding,,661,,2026-01-02 14:38:16
+38,wedding time capsule box,wedding,,312,,2026-01-02 14:38:16
+39,wedding favor box wood,wedding,,832,,2026-01-02 14:38:16
+40,wedding photo frame wood,wedding,,7567,,2026-01-02 14:38:16
+41,wedding display stand wood,wedding,,1989,,2026-01-02 14:38:16
+42,wedding easel wood,wedding,,953,,2026-01-02 14:38:16
+43,gaming_accessories controller_stands,,,6540,,2026-01-02 14:38:16
+44,cnc_laser_products custom_engraved,,,101516,,2026-01-02 14:38:16
+45,home_decor wall_art,,,47962,,2026-01-02 14:38:16
+46,resin_wood_combinations epoxy_tables,,,61638,,2026-01-02 14:38:16
+47,resin_wood_combinations resin_lamps,,,81307,,2026-01-02 14:38:16
+48,tech_accessories cable_organizers,,,1387,,2026-01-02 14:38:16
+49,kitchen_products cutting_boards,,,22221,,2026-01-02 14:38:16
+50,valet tray wood personalized,,,656,,2026-01-02 14:38:16
+51,MagSafe charging stand wood,,,144,,2026-01-02 14:38:16
+52,spice drawer organizer wood,,,178,,2026-01-02 14:38:16
+53,utensil holder wood kitchen,,,1332,,2026-01-02 14:38:16
+54,pegboard organizer wood,,,177,,2026-01-02 14:38:16
+55,birdhouse custom wood,,,344,,2026-01-02 14:38:16
+56,3d_printing organizers,,,1387,,2026-01-02 14:38:16
+57,3d_printing desk_accessories,,,9806,,2026-01-02 14:38:16
+58,desk shelf monitor stand,,,1124,,2026-01-02 14:38:16
+59,wireless charging pad wood,,,199,,2026-01-02 14:38:16
+60,gaming mouse pad wood,,,317,,2026-01-02 14:38:16
+61,cnc_laser_products laser_cut_art,,,910,,2026-01-02 14:38:16
+62,wood planter box outdoor,,,850,,2026-01-02 14:38:16
+63,soap dispenser wood bathroom,,,228,,2026-01-02 14:38:16
+64,resin_wood_combinations coasters,,,2979,,2026-01-02 14:38:16
+65,cnc_laser_products cnc_wood_signs,,,2576,,2026-01-02 14:38:16
+66,resin_wood_combinations resin_art_coasters,,,10055,,2026-01-02 14:38:16
+67,3d_printing phone_stands,,,2979,,2026-01-02 14:38:16
+68,personalized plant stand,,,286,,2026-01-02 14:38:16
+69,gaming desk shelf organizer,gaming_accessories,,132,,2026-01-02 14:38:16
+70,gaming headphone stand,gaming_accessories,,6950,,2026-01-02 14:38:16
+71,wood towel rack,,,5513,,2026-01-02 14:38:16
+72,gaming mouse pad,gaming_accessories,,123067,,2026-01-02 14:38:16
+73,gaming controller holder,gaming_accessories,,5627,,2026-01-02 14:38:16
+74,custom garden planter,,,3156,,2026-01-02 14:38:16
+75,wood gaming desk,gaming_accessories,,2578,,2026-01-02 14:38:16
+76,wood pegboard,,,605,,2026-01-02 14:38:16
+77,gaming monitor stand,gaming_accessories,,159,,2026-01-02 14:38:16
+78,gaming monitor riser,gaming_accessories,,74,,2026-01-02 14:38:16
+79,gaming desk mat,gaming_accessories,,133421,,2026-01-02 14:38:16
+80,custom tool holder,,,3324,,2026-01-02 14:38:16
+81,cnc towel rack,,,34,,2026-01-02 14:38:16
+82,laser cut storage,,,6296,,2026-01-02 14:38:16
+83,cnc bookend,,,96,,2026-01-02 14:38:16
+84,wood bookend,,,7904,,2026-01-02 14:38:16
+85,gaming speaker stand,gaming_accessories,,50,,2026-01-02 14:38:16
+86,personalized pegboard,,,131,,2026-01-02 14:38:16
+87,gaming wall mount,gaming_accessories,,2338,,2026-01-02 14:38:16
+88,gaming cable management,gaming_accessories,,189,,2026-01-02 14:38:16
+89,wood office,,,92076,,2026-01-02 14:38:16
+90,cnc kids toy,,,778,,2026-01-02 14:38:16
+91,gaming desk tray,gaming_accessories,,434,,2026-01-02 14:38:16
+92,personalized gaming desk,gaming_accessories,,17983,,2026-01-02 14:38:16
+93,cnc tech,,,253,,2026-01-02 14:38:16
+94,cnc tool holder,,,392,,2026-01-02 14:38:16
+95,gaming laptop stand,gaming_accessories,,167,,2026-01-02 14:38:16
+96,personalized floating shelf,,,557,,2026-01-02 14:38:16
+97,wood plant stand,,,15514,,2026-01-02 14:38:16
+98,custom workshop organizer,,,311,,2026-01-02 14:38:16
+99,gaming desk riser,gaming_accessories,,78,,2026-01-02 14:38:16
+100,gaming desk with shelf,gaming_accessories,,60,,2026-01-02 14:38:16
+101,cnc floating shelf,,,131,,2026-01-02 14:38:16
+102,gaming desk with storage,gaming_accessories,,70,,2026-01-02 14:38:16
+103,laser cut home decor,,,63054,,2026-01-02 14:38:16
+104,personalized towel rack,,,608,,2026-01-02 14:38:16
+105,wood floating shelf,,,22599,,2026-01-02 14:38:16
+106,personalized bookend,,,3448,,2026-01-02 14:38:16
+107,wood wine rack,,,4293,,2026-01-02 14:38:16
+108,custom kids toy,,,38073,,2026-01-02 14:38:16
+109,cnc workshop organizer,,,199,,2026-01-02 14:38:16
+110,wood picture frame,,,63322,,2026-01-02 14:38:16
+111,gaming desk accessories,gaming_accessories,,67077,,2026-01-02 14:38:16
+112,cnc organization,,,3666,,2026-01-02 14:38:16
+113,cnc storage,,,2412,,2026-01-02 14:38:16
+114,gaming desk organizer,gaming_accessories,,8607,,2026-01-02 14:38:16
+115,custom floating shelf,,,7681,,2026-01-02 14:38:16
+116,laser cut tech,,,725,,2026-01-02 14:38:16
+117,gaming keyboard stand,gaming_accessories,,190,,2026-01-02 14:38:16
+118,personalized kids toy,,,35374,,2026-01-02 14:38:16
+119,cnc nursery decor,,,685,,2026-01-02 14:38:16
+120,cnc pegboard,,,101,,2026-01-02 14:38:16
+121,personalized workshop organizer,,,128,,2026-01-02 14:38:16
+122,custom shower caddy,,,441,,2026-01-02 14:38:16
+123,wood storage,,,129279,,2026-01-02 14:38:16
+124,cnc plant stand,,,151,,2026-01-02 14:38:16
+125,wood home decor,,,538524,,2026-01-02 14:38:16
+126,gaming desk hutch,gaming_accessories,,3,,2026-01-02 14:38:16
+127,personalized wine rack,,,537,,2026-01-02 14:38:16
+128,cnc shower caddy,,,1,,2026-01-02 14:38:16
+129,cnc office,,,2555,,2026-01-02 14:38:16
+130,wood tool holder,,,3603,,2026-01-02 14:38:16
+131,custom towel rack,,,826,,2026-01-02 14:38:16
+132,wood kids toy,,,18512,,2026-01-02 14:38:16
+133,cnc home decor,,,19474,,2026-01-02 14:38:16
+134,custom gaming desk,gaming_accessories,,42812,,2026-01-02 14:38:16
+135,gaming storage,gaming_accessories,,23643,,2026-01-02 14:38:16
+136,custom picture frame,,,61528,,2026-01-02 14:38:16
+137,laser cut office,,,8985,,2026-01-02 14:38:16
+138,gaming PC stand,gaming_accessories,,1626,,2026-01-02 14:38:16
+139,gaming stream deck stand,gaming_accessories,,31,,2026-01-02 14:38:16
+140,laser cut organization,,,9093,,2026-01-02 14:38:16
+141,personalized garden planter,,,1787,,2026-01-02 14:38:16
+142,wood nursery decor,,,62851,,2026-01-02 14:38:16
+143,personalized picture frame,,,51617,,2026-01-02 14:38:16
+144,wood workshop organizer,,,304,,2026-01-02 14:38:16
+145,cnc wine rack,,,225,,2026-01-02 14:38:16
+146,gaming desk drawer,gaming_accessories,,166,,2026-01-02 14:38:16
+147,gaming console stand,gaming_accessories,,2328,,2026-01-02 14:38:16
+148,cnc garden planter,,,103,,2026-01-02 14:38:16
+149,wood shower caddy,,,115,,2026-01-02 14:38:16
+150,cnc picture frame,,,781,,2026-01-02 14:38:16
+151,custom pegboard,,,448,,2026-01-02 14:38:16
+152,personalized tool holder,,,1933,,2026-01-02 14:38:16
+153,cnc gaming desk,gaming_accessories,,29,,2026-01-02 14:38:16
+154,wood garden planter,,,3942,,2026-01-02 14:38:16
+155,wood tech,,,3859,,2026-01-02 14:38:16
+156,personalized shower caddy,,,546,,2026-01-02 14:38:16
+157,custom wine rack,,,1020,,2026-01-02 14:38:16
+158,custom bookend,,,4218,,2026-01-02 14:38:16
+159,gaming microphone stand,gaming_accessories,,24,,2026-01-02 14:38:16
+160,custom plant stand,,,1135,,2026-01-02 14:38:16
+161,gaming desk shelf,gaming_accessories,,1472,,2026-01-02 14:38:16
+162,wood organization,,,106414,,2026-01-02 14:38:16

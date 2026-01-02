@@ -110,6 +110,20 @@ const TOOLS = [
         },
     },
     {
+        name: "fusion_create_sketch_on_face",
+        description: "Start a new sketch directly on a body face (including angled faces like 45° miters). Much easier than creating construction planes!",
+        inputSchema: {
+            type: "object",
+            properties: {
+                body_id: { type: "string", description: "Body name containing the face" },
+                face_id: { type: "string", description: "Face ID or index (use list_faces or get_face_info to find faces)" },
+                name: { type: "string", description: "Optional sketch name" },
+                component: { type: "string", description: "Optional component name to create sketch in" },
+            },
+            required: ["body_id", "face_id"],
+        },
+    },
+    {
         name: "fusion_draw_line",
         description: "Draw a line in a sketch. COORDINATE NOTE: [x, y] are local to the sketch plane. On XY plane: x=right, y=forward. On YZ plane: x=forward(Y), y=up(Z). On XZ plane: x=right(X), y=up(Z). Use sketch_to_3d_coords to verify positions.",
         inputSchema: {
@@ -167,15 +181,28 @@ const TOOLS = [
     },
     {
         name: "fusion_draw_rectangle",
-        description: "Draw a rectangle.",
+        description: "Draw a rectangle using sketch-local coordinates.",
         inputSchema: {
             type: "object",
             properties: {
                 sketch_id: { type: "string", description: "Target sketch name" },
-                corner1: { type: "array", items: { type: "number" }, description: "[x, y] first corner" },
-                corner2: { type: "array", items: { type: "number" }, description: "[x, y] opposite corner" },
+                corner1: { type: "array", items: { type: "number" }, description: "[x, y] first corner in sketch coords" },
+                corner2: { type: "array", items: { type: "number" }, description: "[x, y] opposite corner in sketch coords" },
             },
             required: ["sketch_id", "corner1", "corner2"],
+        },
+    },
+    {
+        name: "fusion_draw_rectangle_3d",
+        description: "Draw a rectangle using WORLD 3D coordinates. Automatically converts to sketch coordinates based on plane. Much easier than manual coordinate conversion!",
+        inputSchema: {
+            type: "object",
+            properties: {
+                sketch_id: { type: "string", description: "Target sketch name" },
+                world_corner1: { type: "array", items: { type: "number" }, description: "[x, y, z] first corner in world mm coordinates" },
+                world_corner2: { type: "array", items: { type: "number" }, description: "[x, y, z] opposite corner in world mm coordinates" },
+            },
+            required: ["sketch_id", "world_corner1", "world_corner2"],
         },
     },
     {
@@ -249,6 +276,19 @@ const TOOLS = [
         },
     },
     {
+        name: "fusion_suggest_sketch_coords",
+        description: "Given desired world 3D bounds, returns the sketch 2D coordinates needed. ESSENTIAL for avoiding coordinate flip errors on XZ/YZ planes! Call this BEFORE drawing to get correct coordinates.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                plane: { type: "string", description: "Plane type: xy, xz, or yz" },
+                world_min: { type: "array", items: { type: "number" }, description: "[x, y, z] minimum corner in world mm" },
+                world_max: { type: "array", items: { type: "number" }, description: "[x, y, z] maximum corner in world mm" },
+            },
+            required: ["plane", "world_min", "world_max"],
+        },
+    },
+    {
         name: "fusion_list_sketch_dimensions",
         description: "List all dimensions in a sketch with their values and expressions.",
         inputSchema: {
@@ -315,7 +355,19 @@ const TOOLS = [
     // ============ 3D Features ============
     {
         name: "fusion_extrude",
-        description: "Extrude a sketch profile into a 3D body. For join/cut operations within a component, specify target_body.",
+        description: `Extrude a sketch profile into a 3D body. Use body_name to give meaningful names instead of 'Body1'. For join/cut operations, specify target_body.
+
+⚠️ JOIN OPERATION CRITICAL REQUIREMENTS:
+- The extruded geometry MUST physically touch/intersect the target_body
+- If they don't touch, Fusion creates an ORPHAN BODY instead of joining (causes "warning": "JOIN_CREATED_ORPHAN_BODY" in response)
+- Common fix: Ensure sketch plane is positioned where it touches the target body's surface
+
+Example for box joint fingers that join correctly:
+- Front panel at Y=[0,12.7], Z=[12.7,88.9] 
+- To add fingers at Z=[0,12.7] that join to FrontPanel:
+- Sketch must be on XZ plane at Y=0 (where FrontPanel starts)
+- Fingers must reach Z=12.7 (where FrontPanel bottom is) to touch it
+- Extrude direction must go INTO the FrontPanel (+Y direction)`,
         inputSchema: {
             type: "object",
             properties: {
@@ -324,6 +376,7 @@ const TOOLS = [
                 distance: { type: "number", description: "Extrusion distance in mm" },
                 direction: { type: "string", enum: ["positive", "negative", "symmetric"], description: "Extrusion direction" },
                 operation: { type: "string", enum: ["new_body", "join", "cut", "intersect"], description: "Boolean operation" },
+                body_name: { type: "string", description: "Name for the new body (e.g., 'FrontPanel', 'BottomPlate'). Makes model self-documenting!" },
                 component: { type: "string", description: "Optional component name to find sketch in" },
                 target_body: { type: "string", description: "Optional target body name for join/cut operations (must be in same component as sketch)" },
             },
@@ -559,6 +612,7 @@ const TOOLS = [
             type: "object",
             properties: {
                 body_id: { type: "string", description: "Body name" },
+                component: { type: "string", description: "Optional component name" },
                 filter: {
                     type: "object",
                     properties: {
@@ -568,6 +622,33 @@ const TOOLS = [
                 },
             },
             required: ["body_id"],
+        },
+    },
+    {
+        name: "fusion_get_face_info",
+        description: "Get detailed information about a specific face including normal vector, area, center point, and angle relative to world axes. Essential for understanding angled surfaces like miter joints.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                body_id: { type: "string", description: "Body name" },
+                face_id: { type: "string", description: "Face ID" },
+                component: { type: "string", description: "Optional component name" },
+            },
+            required: ["body_id", "face_id"],
+        },
+    },
+    {
+        name: "fusion_find_body_intersections",
+        description: "Find edges/lines where two bodies meet or intersect. Perfect for locating joint lines like miter joints.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                body1: { type: "string", description: "First body name" },
+                body2: { type: "string", description: "Second body name" },
+                component: { type: "string", description: "Optional component name" },
+                tolerance: { type: "number", description: "Distance tolerance in mm (default: 0.01)" },
+            },
+            required: ["body1", "body2"],
         },
     },
     {
@@ -592,6 +673,59 @@ const TOOLS = [
                 body_id: { type: "string", description: "Name of the body to query" },
             },
             required: ["body_id"],
+        },
+    },
+    {
+        name: "fusion_get_model_summary",
+        description: "Get a comprehensive summary of the entire model: world bounds, orientation analysis (detects if model built into -Z), all components/bodies with dimensions, and parameters. Call this FIRST to understand the current state!",
+        inputSchema: {
+            type: "object",
+            properties: {},
+            required: [],
+        },
+    },
+    // ============ Component Management ============
+    {
+        name: "fusion_list_components",
+        description: "List all components in the design with hierarchy information. Returns component tree structure, body counts, sketch counts, and child relationships.",
+        inputSchema: {
+            type: "object",
+            properties: {},
+            required: [],
+        },
+    },
+    {
+        name: "fusion_get_component_info",
+        description: "Get detailed information about a specific component including all bodies, sketches, construction planes, and child occurrences.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                component: { type: "string", description: "Component name (e.g., 'Carcass' or 'Carcass:1')" },
+            },
+            required: ["component"],
+        },
+    },
+    {
+        name: "fusion_create_component",
+        description: "Create a new component in the design. Can optionally specify a parent component to create a hierarchical structure.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                name: { type: "string", description: "Name for the new component" },
+                parent: { type: "string", description: "Optional parent component name (default: root component)" },
+            },
+            required: ["name"],
+        },
+    },
+    {
+        name: "fusion_delete_component",
+        description: "Delete a component from the design. Cannot delete the root component. Deletes the component occurrence.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                component: { type: "string", description: "Component name to delete (e.g., 'Carcass' or 'Carcass:1')" },
+            },
+            required: ["component"],
         },
     },
     // ============ Transform Operations ============
@@ -955,11 +1089,13 @@ const ENDPOINTS = {
     fusion_list_planes: "/list_planes",
     fusion_create_offset_plane: "/create_offset_plane",
     fusion_create_sketch: "/create_sketch",
+    fusion_create_sketch_on_face: "/create_sketch_on_face",
     fusion_draw_line: "/draw_line",
     fusion_draw_arc: "/draw_arc",
     fusion_draw_arc_3point: "/draw_arc_3point",
     fusion_draw_circle: "/draw_circle",
     fusion_draw_rectangle: "/draw_rectangle",
+    fusion_draw_rectangle_3d: "/draw_rectangle_3d",
     fusion_draw_spline: "/draw_spline",
     fusion_sketch_fillet: "/sketch_fillet",
     fusion_finish_sketch: "/finish_sketch",
@@ -970,6 +1106,7 @@ const ENDPOINTS = {
     fusion_add_text: "/add_text",
     fusion_list_sketches: "/list_sketches",
     fusion_sketch_to_3d_coords: "/sketch_to_3d_coords",
+    fusion_suggest_sketch_coords: "/suggest_sketch_coords",
     fusion_extrude: "/extrude",
     fusion_extrude_with_draft: "/extrude_with_draft",
     fusion_fillet_edges: "/fillet_edges",
@@ -988,8 +1125,15 @@ const ENDPOINTS = {
     fusion_delete_sketch: "/delete_sketch",
     fusion_list_edges: "/list_edges",
     fusion_list_faces: "/list_faces",
+    fusion_get_face_info: "/get_face_info",
+    fusion_find_body_intersections: "/find_body_intersections",
     fusion_select_by_position: "/select_by_position",
     fusion_get_body_center: "/get_body_center",
+    fusion_get_model_summary: "/get_model_summary",
+    fusion_list_components: "/list_components",
+    fusion_get_component_info: "/get_component_info",
+    fusion_create_component: "/create_component",
+    fusion_delete_component: "/delete_component",
     fusion_copy_body: "/copy_body",
     fusion_move_body: "/move_body",
     fusion_mirror_body: "/mirror_body",

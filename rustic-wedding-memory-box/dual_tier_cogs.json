@@ -1,0 +1,133 @@
+{
+  "standard_tier": {
+    "name": "Rustic Wedding Box - Standard",
+    "price": 70,
+    "cogs": {
+      "materials": {
+        "wood": {
+          "type": "Pine/Poplar",
+          "cost": 0.38,
+          "notes": "0.15 bf @ $2.50/bf"
+        },
+        "hinges": {
+          "type": "Standard Brass",
+          "cost": 3.0,
+          "notes": "2 @ $1.50 each"
+        },
+        "latch_lock": {
+          "type": "Basic Latch",
+          "cost": 1.5,
+          "notes": "Simple lock, no padlock"
+        },
+        "fabric": {
+          "type": "Felt",
+          "cost": 0.75,
+          "notes": "0.25 yd @ $3/yd"
+        },
+        "glue": {
+          "cost": 0.5
+        },
+        "sandpaper": {
+          "cost": 0.5
+        },
+        "finish": {
+          "type": "Stain + Poly",
+          "cost": 0.5,
+          "notes": "Basic finish"
+        },
+        "engraving": {
+          "cost": 0.5,
+          "notes": "5 min @ $0.10/min"
+        },
+        "total": 6.13
+      },
+      "labor": {
+        "time_hours": 1.5,
+        "rate_per_hour": 20,
+        "cost": 37.0,
+        "notes": "Batch production, optimized"
+      },
+      "overhead_shipping": {
+        "overhead": 4.31,
+        "shipping_materials": 2.25,
+        "shipping_cost": 10.0,
+        "total": 16.56
+      },
+      "total_cogs": 59.69
+    },
+    "pricing": {
+      "price": 70,
+      "profit": 10.31,
+      "margin_percent": 14.7
+    }
+  },
+  "premium_tier": {
+    "name": "Rustic Wedding Box - Premium",
+    "price": 112.5,
+    "cogs": {
+      "materials": {
+        "wood": {
+          "type": "Oak",
+          "cost": 0.9,
+          "notes": "0.15 bf @ $6.00/bf"
+        },
+        "hinges": {
+          "type": "Antique Brass",
+          "cost": 4.0,
+          "notes": "2 @ $2.00 each"
+        },
+        "latch_lock": {
+          "type": "Antique Brass + Padlock",
+          "cost": 7.5,
+          "notes": "Latch + padlock + keys"
+        },
+        "fabric": {
+          "type": "Velvet",
+          "cost": 2.0,
+          "notes": "0.25 yd @ $8/yd"
+        },
+        "glue": {
+          "cost": 0.5
+        },
+        "sandpaper": {
+          "cost": 0.5
+        },
+        "finish": {
+          "type": "Natural Oil",
+          "cost": 1.0,
+          "notes": "Premium finish"
+        },
+        "engraving": {
+          "cost": 0.5,
+          "notes": "5 min @ $0.10/min"
+        },
+        "total": 16.9
+      },
+      "labor": {
+        "time_hours": 2.5,
+        "rate_per_hour": 20,
+        "cost": 61.67,
+        "notes": "Hand-finished, premium quality"
+      },
+      "overhead_shipping": {
+        "overhead": 7.86,
+        "shipping_materials": 2.25,
+        "shipping_cost": 10.0,
+        "total": 20.11
+      },
+      "total_cogs": 98.68
+    },
+    "pricing": {
+      "price": 112.5,
+      "profit": 13.82,
+      "margin_percent": 12.3
+    }
+  },
+  "comparison": {
+    "material_cost_difference": 10.77,
+    "labor_cost_difference": 24.67,
+    "total_cogs_difference": 38.99,
+    "price_difference": 42.5,
+    "margin_difference": -2.4
+  }
+}

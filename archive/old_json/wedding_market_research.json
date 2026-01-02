@@ -1,0 +1,146 @@
+{
+  "category": "wedding",
+  "searches_completed": 19,
+  "results": {
+    "wedding sign": {
+      "total_listings": 553417,
+      "top_seller_sales": 0,
+      "top_seller_revenue": 0,
+      "competition_level": "EXTREMELY_HIGH"
+    },
+    "wedding guest book": {
+      "total_listings": 68930,
+      "top_seller_sales": 0,
+      "top_seller_revenue": 0,
+      "competition_level": "HIGH"
+    },
+    "wedding card box": {
+      "total_listings": 26565,
+      "top_seller_sales": 0,
+      "top_seller_revenue": 0,
+      "competition_level": "MEDIUM"
+    },
+    "wedding ring box": {
+      "total_listings": 38535,
+      "top_seller_sales": 0,
+      "top_seller_revenue": 0,
+      "competition_level": "MEDIUM"
+    },
+    "wedding cake topper": {
+      "total_listings": 112905,
+      "top_seller_sales": 0,
+      "top_seller_revenue": 0,
+      "competition_level": "HIGH"
+    },
+    "wedding seating chart": {
+      "total_listings": 43329,
+      "top_seller_sales": 0,
+      "top_seller_revenue": 0,
+      "competition_level": "MEDIUM"
+    },
+    "wedding table numbers": {
+      "total_listings": 53651,
+      "top_seller_sales": 0,
+      "top_seller_revenue": 0,
+      "competition_level": "MEDIUM"
+    },
+    "wedding arch": {
+      "total_listings": 58234,
+      "top_seller_sales": 0,
+      "top_seller_revenue": 0,
+      "competition_level": "MEDIUM"
+    },
+    "wedding backdrop": {
+      "total_listings": 75268,
+      "top_seller_sales": 0,
+      "top_seller_revenue": 0,
+      "competition_level": "HIGH"
+    },
+    "wedding place cards": {
+      "total_listings": 63536,
+      "top_seller_sales": 0,
+      "top_seller_revenue": 0,
+      "competition_level": "MEDIUM"
+    },
+    "wedding favors": {
+      "total_listings": 539940,
+      "top_seller_sales": 0,
+      "top_seller_revenue": 0,
+      "competition_level": "EXTREMELY_HIGH"
+    },
+    "wedding bar sign": {
+      "total_listings": 61060,
+      "top_seller_sales": 0,
+      "top_seller_revenue": 0,
+      "competition_level": "MEDIUM"
+    },
+    "wedding wine box": {
+      "total_listings": 7002,
+      "top_seller_sales": 0,
+      "top_seller_revenue": 0,
+      "competition_level": "LOW"
+    },
+    "wedding card box wood": {
+      "total_listings": 2428,
+      "top_seller_sales": 0,
+      "top_seller_revenue": 0,
+      "competition_level": "LOW"
+    },
+    "wedding sign personalized": {
+      "total_listings": 106987,
+      "top_seller_sales": 0,
+      "top_seller_revenue": 0,
+      "competition_level": "HIGH"
+    },
+    "wedding card box personalized": {
+      "total_listings": 6695,
+      "top_seller_sales": 0,
+      "top_seller_revenue": 0,
+      "competition_level": "LOW"
+    },
+    "wedding guest book wood": {
+      "total_listings": 8954,
+      "top_seller_sales": 0,
+      "top_seller_revenue": 0,
+      "competition_level": "LOW"
+    },
+    "wedding sign rustic": {
+      "total_listings": 60463,
+      "top_seller_sales": 0,
+      "top_seller_revenue": 0,
+      "competition_level": "MEDIUM"
+    },
+    "wedding card box rustic": {
+      "total_listings": 3729,
+      "top_seller_sales": 0,
+      "top_seller_revenue": 0,
+      "competition_level": "LOW"
+    }
+  },
+  "low_competition": [
+    "wedding card box wood",
+    "wedding card box rustic",
+    "wedding card box personalized",
+    "wedding wine box",
+    "wedding guest book wood"
+  ],
+  "medium_competition": [
+    "wedding card box",
+    "wedding ring box",
+    "wedding seating chart"
+  ],
+  "high_competition": [
+    "wedding table numbers",
+    "wedding arch",
+    "wedding sign rustic",
+    "wedding bar sign",
+    "wedding place cards",
+    "wedding guest book",
+    "wedding backdrop",
+    "wedding sign personalized",
+    "wedding cake topper",
+    "wedding favors",
+    "wedding sign"
+  ],
+  "analysis_date": "2026-01-01T15:23:02.982821"
+}

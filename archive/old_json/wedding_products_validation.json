@@ -1,0 +1,98 @@
+{
+  "category": "wedding",
+  "validation_results": {
+    "wedding card box wood": {
+      "total_listings": 2428,
+      "validation_status": "PROVEN_MARKET",
+      "top_seller_sales": 108,
+      "top_seller_revenue": 5399,
+      "note": "108 sales/month, $5,399/month revenue - EXCELLENT! Top seller: ModernAlbumDesigns"
+    },
+    "wedding card box rustic": {
+      "total_listings": 3729,
+      "validation_status": "PROVEN_MARKET",
+      "top_seller_sales": 46,
+      "top_seller_revenue": 4554,
+      "note": "46 sales/month, $4,554/month revenue - EXCELLENT! Top seller: Primitiveweddings"
+    },
+    "wedding card box personalized": {
+      "total_listings": 6695,
+      "validation_status": "PROVEN_MARKET",
+      "top_seller_sales": 108,
+      "top_seller_revenue": 5399,
+      "note": "108 sales/month, $5,399/month revenue - EXCELLENT! Top seller: ModernAlbumDesigns"
+    },
+    "wedding wine box": {
+      "total_listings": 7002,
+      "validation_status": "PROVEN_MARKET",
+      "top_seller_sales": 62,
+      "top_seller_revenue": 14285,
+      "note": "62 sales/month, $14,285/month revenue - EXCELLENT! Top seller: BoldianDesigns"
+    },
+    "wedding guest book wood": {
+      "total_listings": 8954,
+      "validation_status": "PROVEN_MARKET",
+      "top_seller_sales": 41,
+      "top_seller_revenue": 9490,
+      "note": "41 sales/month, $9,490/month revenue - EXCELLENT! Top seller: ascHandcraftedWoods"
+    },
+    "wedding card box": {
+      "total_listings": 26565,
+      "validation_status": "PROVEN_MARKET",
+      "top_seller_sales": 143,
+      "top_seller_revenue": 22199,
+      "note": "143 sales/month, $22,199/month revenue - EXCELLENT! Top seller: TheCraftSocietyUK"
+    },
+    "wedding seating chart": {
+      "total_listings": 43329,
+      "validation_status": "PROVEN_MARKET",
+      "top_seller_sales": 340,
+      "top_seller_revenue": 14161,
+      "note": "340 sales/month, $14,161/month revenue - EXCELLENT! Top seller: SweetPeaHavenUS"
+    }
+  },
+  "summary": {
+    "total_validated": 7,
+    "proven_markets": [
+      "wedding card box wood",
+      "wedding card box rustic",
+      "wedding card box personalized",
+      "wedding wine box",
+      "wedding guest book wood",
+      "wedding card box",
+      "wedding seating chart"
+    ],
+    "all_products_active": true,
+    "total_opportunities": 7
+  },
+  "recommendations": {
+    "launch_immediately": [
+      "wedding card box wood",
+      "wedding card box rustic",
+      "wedding card box personalized",
+      "wedding wine box",
+      "wedding guest book wood",
+      "wedding card box",
+      "wedding seating chart"
+    ],
+    "top_opportunities": [
+      "wedding seating chart",
+      "wedding card box",
+      "wedding card box wood",
+      "wedding card box personalized",
+      "wedding wine box",
+      "wedding card box rustic",
+      "wedding guest book wood"
+    ],
+    "priority_order": [
+      "wedding seating chart",
+      "wedding card box",
+      "wedding card box wood",
+      "wedding card box personalized",
+      "wedding wine box",
+      "wedding card box rustic",
+      "wedding guest book wood"
+    ]
+  },
+  "validation_date": "2026-01-01T15:28:03.431096"
+}

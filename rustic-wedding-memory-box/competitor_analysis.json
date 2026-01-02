@@ -1,0 +1,106 @@
+{
+  "analysis_date": "2024-12-31",
+  "search_term": "wedding memory box wood",
+  "competitors": [
+    {
+      "shop": "EngraveMyMemories",
+      "price": 89.95,
+      "monthly_sales": 538,
+      "monthly_revenue": 70273,
+      "total_sales": 3122,
+      "reviews": 469,
+      "listing_age_months": 13,
+      "tier": "market_leader"
+    },
+    {
+      "shop": "HomeLegacyGoods",
+      "price": 105.49,
+      "monthly_sales": 91,
+      "monthly_revenue": 9600,
+      "total_sales": 1427,
+      "reviews": 359,
+      "listing_age_months": 12,
+      "tier": "premium"
+    },
+    {
+      "shop": "ModernAlbumDesigns",
+      "price": 49.99,
+      "monthly_sales": 108,
+      "monthly_revenue": 5399,
+      "total_sales": 3578,
+      "reviews": 642,
+      "listing_age_months": 21,
+      "tier": "budget"
+    },
+    {
+      "shop": "MUUJEE",
+      "price": 85.99,
+      "monthly_sales": 61,
+      "monthly_revenue": 5245,
+      "total_sales": 1235,
+      "reviews": 270,
+      "listing_age_months": 9,
+      "tier": "mid_range"
+    },
+    {
+      "shop": "SandednBranded",
+      "price": 154.0,
+      "monthly_sales": 20,
+      "monthly_revenue": 3080,
+      "total_sales": 630,
+      "reviews": 156,
+      "listing_age_months": 5,
+      "tier": "premium"
+    },
+    {
+      "shop": "WarnersEnd",
+      "price": 49.79,
+      "monthly_sales": 59,
+      "monthly_revenue": 2938,
+      "total_sales": 1632,
+      "reviews": 259,
+      "listing_age_months": 8,
+      "tier": "budget"
+    },
+    {
+      "shop": "HighPointGifts",
+      "price": 279.0,
+      "monthly_sales": 10,
+      "monthly_revenue": 2790,
+      "total_sales": 61,
+      "reviews": 12,
+      "listing_age_months": 0.4,
+      "tier": "ultra_premium"
+    },
+    {
+      "shop": "NZHANDICRAFT",
+      "price": 23.63,
+      "monthly_sales": 108,
+      "monthly_revenue": 2552,
+      "total_sales": 4495,
+      "reviews": 651,
+      "listing_age_months": 21,
+      "tier": "budget"
+    },
+    {
+      "shop": "BabyRiceUK",
+      "price": 64.78,
+      "monthly_sales": 27,
+      "monthly_revenue": 1749,
+      "total_sales": 115,
+      "reviews": 12,
+      "listing_age_months": 0.4,
+      "tier": "mid_range"
+    },
+    {
+      "shop": "TheWebbRanch",
+      "price": 430.75,
+      "monthly_sales": 4,
+      "monthly_revenue": 1723,
+      "total_sales": 56,
+      "reviews": 15,
+      "listing_age_months": 0.5,
+      "tier": "ultra_premium"
+    }
+  ]
+}

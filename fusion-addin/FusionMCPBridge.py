@@ -713,6 +713,7 @@ def handle_extrude(body):
     operation = body.get("operation", "new_body")
     component_name = body.get("component")  # Optional: specify component
     target_body_name = body.get("target_body")  # Optional: for join/cut operations
+    new_body_name = body.get("body_name")  # Optional: name for the new body
     
     # Get sketch and its component
     sketch, sketch_component = get_sketch_with_component(sketch_id, component_name)
@@ -720,6 +721,9 @@ def handle_extrude(body):
     
     if not profile:
         raise Exception(f"Profile not found at index {profile_index}")
+    
+    # Count bodies BEFORE extrusion (for orphan detection)
+    bodies_before = sketch_component.bRepBodies.count
     
     # Use the sketch's component for the extrusion
     extrudes = sketch_component.features.extrudeFeatures
@@ -736,9 +740,9 @@ def handle_extrude(body):
     extrude_input = extrudes.createInput(profile, initial_op)
     
     # If a target body is specified for join/cut, set the participant bodies
+    target_body = None
     if target_body_name and operation in ["join", "cut", "intersect"]:
         # Find the target body in this component
-        target_body = None
         for b in sketch_component.bRepBodies:
             if b.name == target_body_name:
                 target_body = b
@@ -748,24 +752,68 @@ def handle_extrude(body):
             # participantBodies expects a list of BRepBody, not ObjectCollection
             extrude_input.participantBodies = [target_body]
     
-    # Set distance
+    # Set distance and direction
     if direction == "symmetric":
         extrude_input.setSymmetricExtent(adsk.core.ValueInput.createByReal(distance), True)
-    elif direction == "negative":
-        extrude_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(distance))
     else:
-        extrude_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(distance))
+        # Use setOneSideExtent with proper direction enum
+        extent_def = adsk.fusion.DistanceExtentDefinition.create(adsk.core.ValueInput.createByReal(distance))
+        if direction == "negative":
+            extrude_input.setOneSideExtent(extent_def, adsk.fusion.ExtentDirections.NegativeExtentDirection)
+        else:
+            extrude_input.setOneSideExtent(extent_def, adsk.fusion.ExtentDirections.PositiveExtentDirection)
     
     extrude = extrudes.add(extrude_input)
     adsk.doEvents()  # Let Fusion process
     
     body_name = extrude.bodies.item(0).name if extrude.bodies.count > 0 else target_body_name
     
-    return {
+    # Rename the body if a name was specified
+    if new_body_name and extrude.bodies.count > 0 and operation == "new_body":
+        try:
+            new_body = extrude.bodies.item(0)
+            new_body.name = new_body_name
+            body_name = new_body_name
+        except:
+            pass  # If rename fails, keep the auto-generated name
+    
+    # Count bodies AFTER extrusion (for orphan detection)
+    bodies_after = sketch_component.bRepBodies.count
+    
+    # Build result
+    result = {
         "feature_id": extrude.name,
         "body_id": body_name,
-        "component": sketch_component.name
+        "component": sketch_component.name,
+        "source_sketch": sketch_id
     }
+    
+    # CRITICAL: Detect if join operation created orphan body instead of joining
+    if operation == "join":
+        if bodies_after > bodies_before:
+            # WARNING: New body was created instead of joining!
+            new_body = extrude.bodies.item(0) if extrude.bodies.count > 0 else None
+            result["warning"] = "JOIN_CREATED_ORPHAN_BODY"
+            result["warning_detail"] = (
+                f"Expected to join to '{target_body_name}' but created new body '{body_name}' instead. "
+                "This happens when the new geometry doesn't touch/intersect the target body. "
+                "The new extrusion must share at least one point/edge/face with the target body for join to work. "
+                "Check: 1) Sketch is on correct plane touching target body, 2) Extrude direction goes toward target body."
+            )
+            if new_body:
+                bb = new_body.boundingBox
+                result["orphan_body_bounds"] = {
+                    "min": [bb.minPoint.x * 10, bb.minPoint.y * 10, bb.minPoint.z * 10],
+                    "max": [bb.maxPoint.x * 10, bb.maxPoint.y * 10, bb.maxPoint.z * 10]
+                }
+            if target_body:
+                tbb = target_body.boundingBox
+                result["target_body_bounds"] = {
+                    "min": [tbb.minPoint.x * 10, tbb.minPoint.y * 10, tbb.minPoint.z * 10],
+                    "max": [tbb.maxPoint.x * 10, tbb.maxPoint.y * 10, tbb.maxPoint.z * 10]
+                }
+    
+    return result
 
 
 def handle_fillet_edges(body):
@@ -1059,16 +1107,64 @@ def handle_boolean(body):
 
 def handle_list_bodies(body):
     root = get_root()
+    design = get_design()
     component_name = body.get("component")
     include_all = body.get("include_all", True)  # Default to traversing all components
     
     bodies = []
     debug_info = {
-        "version": "2.0",
+        "version": "3.0",
         "root_body_count": root.bRepBodies.count,
         "occurrence_count": root.occurrences.count,
         "all_occurrences_count": root.allOccurrences.count
     }
+    
+    # Build a map of body -> source feature by scanning timeline
+    body_provenance = {}
+    try:
+        timeline = design.timeline
+        for i in range(timeline.count):
+            item = timeline.item(i)
+            try:
+                entity = item.entity
+                if hasattr(entity, 'bodies') and entity.bodies:
+                    for b in entity.bodies:
+                        # Get the source sketch if it's an extrude
+                        source_sketch = None
+                        feature_type = entity.objectType.split('::')[-1]
+                        if hasattr(entity, 'profile') and entity.profile:
+                            try:
+                                source_sketch = entity.profile.parentSketch.name
+                            except:
+                                pass
+                        body_provenance[b.entityToken] = {
+                            "feature_name": item.name,
+                            "feature_type": feature_type,
+                            "source_sketch": source_sketch,
+                            "timeline_index": i
+                        }
+            except:
+                pass
+    except:
+        pass
+    
+    def get_shape_analysis(bbox, width, depth, height):
+        """Analyze shape to determine principal axes and panel type."""
+        dims = [(width, 'X'), (depth, 'Y'), (height, 'Z')]
+        dims.sort(key=lambda x: x[0], reverse=True)
+        
+        # Determine if it's a panel (one dimension much smaller)
+        if dims[2][0] < dims[0][0] * 0.2:  # Thin dimension < 20% of longest
+            panel_type = f"panel_perpendicular_to_{dims[2][1]}"
+        else:
+            panel_type = "solid_block"
+        
+        return {
+            "longest": {"axis": dims[0][1], "size_mm": round(dims[0][0], 2)},
+            "medium": {"axis": dims[1][1], "size_mm": round(dims[1][0], 2)},
+            "shortest": {"axis": dims[2][1], "size_mm": round(dims[2][0], 2), "likely_role": "thickness" if panel_type.startswith("panel") else "dimension"},
+            "shape_type": panel_type
+        }
     
     def add_body_info(b, comp_name="root"):
         """Add body info to the list."""
@@ -1078,22 +1174,41 @@ def handle_list_bodies(body):
         depth = (bbox.maxPoint.y - bbox.minPoint.y) * 10
         height = (bbox.maxPoint.z - bbox.minPoint.z) * 10
         
-        bodies.append({
+        # Get provenance if available
+        provenance = body_provenance.get(b.entityToken, {})
+        
+        # Suggest a name from source sketch
+        suggested_name = None
+        if provenance.get("source_sketch"):
+            sketch_name = provenance["source_sketch"]
+            # Remove _Sketch suffix if present
+            suggested_name = sketch_name.replace("_Sketch", "").replace("Sketch", "")
+        
+        body_info = {
             "body_id": b.name,
             "name": b.name,
             "component": comp_name,
+            "suggested_name": suggested_name,
+            "provenance": provenance if provenance else None,
             "is_solid": b.isSolid,
-            "volume": b.volume * 1000,  # cm³ to mm³
+            "volume_mm3": round(b.volume * 1000, 2),  # cm³ to mm³
+            "shape_analysis": get_shape_analysis(bbox, width, depth, height),
             "dimensions": {
-                "width": round(width, 2),
-                "depth": round(depth, 2),
-                "height": round(height, 2)
+                "x_extent": round(width, 2),
+                "y_extent": round(depth, 2),
+                "z_extent": round(height, 2)
             },
             "bounding_box": {
                 "min": [round(bbox.minPoint.x * 10, 2), round(bbox.minPoint.y * 10, 2), round(bbox.minPoint.z * 10, 2)],
                 "max": [round(bbox.maxPoint.x * 10, 2), round(bbox.maxPoint.y * 10, 2), round(bbox.maxPoint.z * 10, 2)]
-            }
-        })
+            },
+            "center": [
+                round((bbox.minPoint.x + bbox.maxPoint.x) * 5, 2),  # *10/2
+                round((bbox.minPoint.y + bbox.maxPoint.y) * 5, 2),
+                round((bbox.minPoint.z + bbox.maxPoint.z) * 5, 2)
+            ]
+        }
+        bodies.append(body_info)
     
     def traverse_occurrences(occurrences, parent_name=""):
         """Recursively traverse all occurrences to find bodies."""
@@ -1185,9 +1300,18 @@ def handle_list_faces(body):
     root = get_root()
     body_id = body.get("body_id")
     filter_opts = body.get("filter", {})
+    component_name = body.get("component")
+    
+    # Get target component
+    if component_name:
+        target_component, target_occ = get_component_by_name(component_name)
+        if not target_component:
+            raise Exception(f"Component not found: {component_name}")
+    else:
+        target_component = root
     
     target_body = None
-    for b in root.bRepBodies:
+    for b in target_component.bRepBodies:
         if b.name == body_id:
             target_body = b
             break
@@ -1227,6 +1351,237 @@ def handle_list_faces(body):
         })
     
     return {"faces": faces}
+
+
+def handle_get_face_info(body):
+    """Get detailed information about a specific face."""
+    root = get_root()
+    body_id = body.get("body_id")
+    face_id = body.get("face_id")
+    component_name = body.get("component")
+    
+    # Get target component
+    if component_name:
+        target_component, target_occ = get_component_by_name(component_name)
+        if not target_component:
+            raise Exception(f"Component not found: {component_name}")
+    else:
+        target_component = root
+    
+    # Find body
+    target_body = None
+    for b in target_component.bRepBodies:
+        if b.name == body_id:
+            target_body = b
+            break
+    
+    if not target_body:
+        raise Exception(f"Body not found: {body_id}")
+    
+    # Find face (support both index-based IDs and numeric indices)
+    target_face = None
+    if face_id.startswith(f"{body_id}_face_"):
+        # Extract index from ID like "LeftPanel_face_12"
+        face_index = int(face_id.split("_")[-1])
+        if 0 <= face_index < target_body.faces.count:
+            target_face = target_body.faces.item(face_index)
+    else:
+        # Try as direct index
+        try:
+            face_index = int(face_id)
+            if 0 <= face_index < target_body.faces.count:
+                target_face = target_body.faces.item(face_index)
+        except ValueError:
+            pass
+    
+    if not target_face:
+        raise Exception(f"Face not found: {face_id}")
+    
+    # Get face geometry
+    geo = target_face.geometry
+    face_type = "unknown"
+    normal = None
+    angle_to_xy = None
+    angle_to_xz = None
+    angle_to_yz = None
+    
+    if hasattr(geo, 'surfaceType'):
+        if geo.surfaceType == adsk.core.SurfaceTypes.PlaneSurfaceType:
+            face_type = "planar"
+            normal = [geo.normal.x, geo.normal.y, geo.normal.z]
+            
+            # Calculate angles to world planes
+            import math
+            xy_normal = adsk.core.Vector3D.create(0, 0, 1)
+            xz_normal = adsk.core.Vector3D.create(0, 1, 0)
+            yz_normal = adsk.core.Vector3D.create(1, 0, 0)
+            
+            angle_to_xy = math.degrees(geo.normal.angleTo(xy_normal))
+            angle_to_xz = math.degrees(geo.normal.angleTo(xz_normal))
+            angle_to_yz = math.degrees(geo.normal.angleTo(yz_normal))
+            
+        elif geo.surfaceType == adsk.core.SurfaceTypes.CylinderSurfaceType:
+            face_type = "cylindrical"
+        elif geo.surfaceType == adsk.core.SurfaceTypes.SphereSurfaceType:
+            face_type = "spherical"
+    
+    centroid = target_face.centroid
+    
+    # Get bounding box
+    bbox = target_face.boundingBox
+    
+    return {
+        "face_id": face_id,
+        "body_id": body_id,
+        "type": face_type,
+        "area_mm2": target_face.area * 100,  # cm² to mm²
+        "normal": normal,
+        "angles": {
+            "to_xy_plane": angle_to_xy,
+            "to_xz_plane": angle_to_xz,
+            "to_yz_plane": angle_to_yz
+        },
+        "centroid_mm": [centroid.x * 10, centroid.y * 10, centroid.z * 10],
+        "bounding_box": {
+            "min": [bbox.minPoint.x * 10, bbox.minPoint.y * 10, bbox.minPoint.z * 10],
+            "max": [bbox.maxPoint.x * 10, bbox.maxPoint.y * 10, bbox.maxPoint.z * 10]
+        }
+    }
+
+
+def handle_find_body_intersections(body):
+    """Find where two bodies intersect/touch."""
+    root = get_root()
+    body1_name = body.get("body1")
+    body2_name = body.get("body2")
+    component_name = body.get("component")
+    tolerance = body.get("tolerance", 0.01) / 10.0  # mm to cm
+    
+    # Get target component
+    if component_name:
+        target_component, target_occ = get_component_by_name(component_name)
+        if not target_component:
+            raise Exception(f"Component not found: {component_name}")
+    else:
+        target_component = root
+    
+    # Find bodies
+    body1 = None
+    body2 = None
+    for b in target_component.bRepBodies:
+        if b.name == body1_name:
+            body1 = b
+        if b.name == body2_name:
+            body2 = b
+    
+    if not body1:
+        raise Exception(f"Body not found: {body1_name}")
+    if not body2:
+        raise Exception(f"Body not found: {body2_name}")
+    
+    # Find intersecting edges/faces - look for shared edges
+    intersections = []
+    
+    # Check if edges from body1 are shared with body2
+    for edge1_idx, edge1 in enumerate(body1.edges):
+        start1 = edge1.startVertex.geometry
+        end1 = edge1.endVertex.geometry
+        
+        # Check against edges of body2
+        for edge2_idx, edge2 in enumerate(body2.edges):
+            start2 = edge2.startVertex.geometry
+            end2 = edge2.endVertex.geometry
+            
+            # Check if edges are coincident (shared edge at miter joint)
+            # Compare both endpoints
+            dist_start = min(start1.distanceTo(start2), start1.distanceTo(end2))
+            dist_end = min(end1.distanceTo(start2), end1.distanceTo(end2))
+            
+            if dist_start < tolerance and dist_end < tolerance:
+                # Found shared edge at miter joint!
+                mid_x = (start1.x + end1.x) / 2
+                mid_y = (start1.y + end1.y) / 2
+                mid_z = (start1.z + end1.z) / 2
+                
+                intersections.append({
+                    "type": "shared_edge",
+                    "body1": body1_name,
+                    "body2": body2_name,
+                    "edge1_id": f"{body1_name}_edge_{edge1_idx}",
+                    "edge2_id": f"{body2_name}_edge_{edge2_idx}",
+                    "position_mm": [mid_x * 10, mid_y * 10, mid_z * 10],
+                    "length_mm": edge1.length * 10
+                })
+                break  # Found match for this edge
+    
+    return {
+        "body1": body1_name,
+        "body2": body2_name,
+        "intersections": intersections,
+        "count": len(intersections)
+    }
+
+
+def handle_create_sketch_on_face(body):
+    """Create a sketch on a body face."""
+    root = get_root()
+    body_id = body.get("body_id")
+    face_id = body.get("face_id")
+    sketch_name = body.get("name", f"Sketch_on_{body_id}")
+    component_name = body.get("component")
+    
+    # Get target component
+    if component_name:
+        target_component, target_occ = get_component_by_name(component_name)
+        if not target_component:
+            raise Exception(f"Component not found: {component_name}")
+    else:
+        target_component = root
+    
+    # Find body
+    target_body = None
+    for b in target_component.bRepBodies:
+        if b.name == body_id:
+            target_body = b
+            break
+    
+    if not target_body:
+        raise Exception(f"Body not found: {body_id}")
+    
+    # Find face
+    target_face = None
+    if face_id.startswith(f"{body_id}_face_"):
+        face_index = int(face_id.split("_")[-1])
+        if 0 <= face_index < target_body.faces.count:
+            target_face = target_body.faces.item(face_index)
+    else:
+        try:
+            face_index = int(face_id)
+            if 0 <= face_index < target_body.faces.count:
+                target_face = target_body.faces.item(face_index)
+        except ValueError:
+            pass
+    
+    if not target_face:
+        raise Exception(f"Face not found: {face_id}")
+    
+    # Create sketch on face
+    sketches = target_component.sketches
+    sketch = sketches.add(target_face)
+    sketch.name = sketch_name
+    
+    # Get sketch plane info for reference
+    plane_type = "unknown"
+    if sketch.referencePlane:
+        plane_type = "face"
+    
+    return {
+        "sketch_id": sketch.name,
+        "name": sketch.name,
+        "plane": plane_type,
+        "on_body": body_id,
+        "on_face": face_id
+    }
 
 
 def handle_select_by_position(body):
@@ -3283,6 +3638,157 @@ def handle_create_cylinder(body):
     }
 
 
+def handle_create_box_joint(body):
+    """Create a complete box joint between two panels.
+    
+    This helper tool automates the correct box joint creation process:
+    1. Creates slots in the receiving panel
+    2. Creates matching fingers on the mating panel that extend into those slots
+    3. Verifies the join operation succeeded (no orphan bodies)
+    
+    Args:
+        receiving_body: Name of the panel that will have slots cut into it
+        mating_body: Name of the panel that will have fingers added to it
+        joint_edge: Which edge of the receiving body to joint (front, back, left, right, top, bottom)
+        finger_width: Width of each finger in mm (default: matches panel thickness)
+        finger_depth: How deep fingers go into slots in mm (default: matches panel thickness)
+        component: Component containing both bodies
+    """
+    design = get_design()
+    
+    receiving_body_name = body.get("receiving_body")
+    mating_body_name = body.get("mating_body")
+    joint_edge = body.get("joint_edge")  # front, back, left, right, top, bottom
+    finger_width = body.get("finger_width", 12.7) / 10.0  # mm to cm
+    finger_depth = body.get("finger_depth", 12.7) / 10.0  # mm to cm
+    component_name = body.get("component")
+    
+    # Get component
+    if component_name:
+        target_component = None
+        root = get_root()
+        for occ in root.occurrences:
+            if occ.component.name == component_name or occ.name == component_name:
+                target_component = occ.component
+                break
+        if not target_component:
+            raise Exception(f"Component not found: {component_name}")
+    else:
+        target_component = get_root()
+    
+    # Find both bodies
+    receiving_body = None
+    mating_body = None
+    for b in target_component.bRepBodies:
+        if b.name == receiving_body_name:
+            receiving_body = b
+        if b.name == mating_body_name:
+            mating_body = b
+    
+    if not receiving_body:
+        raise Exception(f"Receiving body not found: {receiving_body_name}")
+    if not mating_body:
+        raise Exception(f"Mating body not found: {mating_body_name}")
+    
+    # Get bounding boxes
+    r_bb = receiving_body.boundingBox
+    m_bb = mating_body.boundingBox
+    
+    # Convert to mm for calculations
+    r_min = [r_bb.minPoint.x * 10, r_bb.minPoint.y * 10, r_bb.minPoint.z * 10]
+    r_max = [r_bb.maxPoint.x * 10, r_bb.maxPoint.y * 10, r_bb.maxPoint.z * 10]
+    m_min = [m_bb.minPoint.x * 10, m_bb.minPoint.y * 10, m_bb.minPoint.z * 10]
+    m_max = [m_bb.maxPoint.x * 10, m_bb.maxPoint.y * 10, m_bb.maxPoint.z * 10]
+    
+    finger_width_mm = finger_width * 10
+    finger_depth_mm = finger_depth * 10
+    
+    # Determine edge parameters based on joint_edge
+    # This defines where slots go and where fingers extend
+    if joint_edge == "front":
+        # Front edge of receiving body (Y = min)
+        edge_length = r_max[0] - r_min[0]  # X extent
+        slot_y_min = r_min[1]
+        slot_y_max = r_min[1] + finger_depth_mm
+        slot_z_min = r_min[2]
+        slot_z_max = r_max[2]
+        axis = "X"
+        finger_extrude_dir = "positive"  # +Y
+        slot_plane_type = "xy"
+        slot_plane_offset = r_max[2]  # Top of receiving body for slot sketch
+        slot_cut_dir = "negative"  # Cut down through Z
+    elif joint_edge == "back":
+        edge_length = r_max[0] - r_min[0]
+        slot_y_min = r_max[1] - finger_depth_mm
+        slot_y_max = r_max[1]
+        slot_z_min = r_min[2]
+        slot_z_max = r_max[2]
+        axis = "X"
+        finger_extrude_dir = "positive"
+        slot_plane_type = "xy"
+        slot_plane_offset = r_max[2]
+        slot_cut_dir = "negative"
+    elif joint_edge == "left":
+        edge_length = r_max[1] - r_min[1]
+        slot_y_min = r_min[1]
+        slot_y_max = r_max[1]
+        slot_z_min = r_min[2]
+        slot_z_max = r_max[2]
+        axis = "Y"
+        finger_extrude_dir = "positive"  # +X
+        slot_plane_type = "xy"
+        slot_plane_offset = r_max[2]
+        slot_cut_dir = "negative"
+    elif joint_edge == "right":
+        edge_length = r_max[1] - r_min[1]
+        slot_y_min = r_min[1]
+        slot_y_max = r_max[1]
+        slot_z_min = r_min[2]
+        slot_z_max = r_max[2]
+        axis = "Y"
+        finger_extrude_dir = "positive"
+        slot_plane_type = "xy"
+        slot_plane_offset = r_max[2]
+        slot_cut_dir = "negative"
+    else:
+        raise Exception(f"Invalid joint_edge: {joint_edge}. Use: front, back, left, right")
+    
+    # Calculate number of fingers
+    num_fingers = int(edge_length / finger_width_mm)
+    
+    # Return guidance instead of executing (safer for now)
+    return {
+        "status": "guidance",
+        "message": "Box joint helper - use this guidance to create the joint correctly",
+        "receiving_body": receiving_body_name,
+        "receiving_bounds": {"min": r_min, "max": r_max},
+        "mating_body": mating_body_name,
+        "mating_bounds": {"min": m_min, "max": m_max},
+        "joint_edge": joint_edge,
+        "edge_length_mm": edge_length,
+        "finger_width_mm": finger_width_mm,
+        "finger_depth_mm": finger_depth_mm,
+        "num_fingers": num_fingers,
+        "instructions": [
+            f"1. Create sketch on {slot_plane_type.upper()} plane offset by {slot_plane_offset}mm",
+            f"2. Draw {num_fingers // 2} slot rectangles at alternating positions along {axis} axis",
+            f"3. Extrude CUT these slots {slot_cut_dir} into {receiving_body_name} by {finger_depth_mm}mm",
+            f"4. Create sketch on appropriate plane for {mating_body_name} fingers",
+            f"5. Draw finger rectangles at SAME positions as slots",
+            f"6. Extrude JOIN these fingers {finger_extrude_dir} into {mating_body_name} by {finger_depth_mm}mm",
+            "7. CRITICAL: Finger geometry MUST touch existing mating body for join to work!"
+        ],
+        "critical_reminders": [
+            "Slots are CUT into receiving body (removes material)",
+            "Fingers are JOIN to mating body (adds material that must touch existing body)",
+            "On XZ plane: sketch +Y = world -Z (draw with negative Y for positive Z)",
+            "On YZ plane: sketch +X = world -Z (draw with negative X for positive Z)",
+            "Use fusion_draw_rectangle_3d to auto-convert world coords to sketch coords",
+            "After extrude join, verify body count did NOT increase (no orphan bodies)"
+        ]
+    }
+
+
 def handle_extrude_with_draft(body):
     """Extrude a profile with a draft/taper angle.
     
@@ -3465,34 +3971,88 @@ def handle_create_box(body):
 def handle_list_sketches(body):
     """List all sketches in the design with their plane information.
     
-    Returns sketch names, plane info, profile counts, and 3D position hints.
+    Returns sketch names, plane info, profile counts, and coordinate mapping guide.
     """
     root = get_root()
     
     sketches = []
     
+    def get_coordinate_mapping(plane_type, normal):
+        """Get human-readable coordinate mapping for sketch plane."""
+        if plane_type == "XY":
+            return {
+                "plane_type": "XY",
+                "plane_nickname": "horizontal",
+                "sketch_x_means": "World +X (left/right)",
+                "sketch_y_means": "World +Y (front/back)",
+                "extrude_positive": "World +Z (up)",
+                "extrude_negative": "World -Z (down)",
+                "gotcha": None
+            }
+        elif plane_type == "XZ":
+            return {
+                "plane_type": "XZ",
+                "plane_nickname": "vertical_front",
+                "sketch_x_means": "World +X (left/right)",
+                "sketch_y_means": "World -Z (WARNING: +sketch_Y goes DOWN in world!)",
+                "extrude_positive": "World +Y (into model, away from viewer)",
+                "extrude_negative": "World -Y (toward viewer)",
+                "gotcha": "CRITICAL: To create geometry at positive world Z, use NEGATIVE sketch Y values!"
+            }
+        elif plane_type == "YZ":
+            return {
+                "plane_type": "YZ",
+                "plane_nickname": "vertical_side",
+                "sketch_x_means": "World -Z (WARNING: +sketch_X goes DOWN in world!)",
+                "sketch_y_means": "World +Y (front/back)",
+                "extrude_positive": "World +X (to the right)",
+                "extrude_negative": "World -X (to the left)",
+                "gotcha": "CRITICAL: To create geometry at positive world Z, use NEGATIVE sketch X values!"
+            }
+        else:
+            return {
+                "plane_type": "Custom",
+                "plane_nickname": "custom",
+                "normal": [round(normal.x, 3), round(normal.y, 3), round(normal.z, 3)],
+                "gotcha": "Custom plane - verify coordinate mapping with sketch_to_3d_coords tool"
+            }
+    
     def get_sketch_info(sketch, component_name="root"):
         """Extract info from a sketch."""
         plane = sketch.referencePlane
         
-        # Try to determine plane orientation
+        # Determine plane orientation and get coordinate mapping
+        plane_type = "unknown"
         plane_info = "unknown"
+        coord_mapping = {}
+        origin_3d = [0, 0, 0]
+        normal = None
+        
         try:
             if hasattr(plane, 'geometry'):
                 geo = plane.geometry
                 if hasattr(geo, 'normal'):
                     n = geo.normal
+                    normal = n
                     if abs(n.z) > 0.9:
+                        plane_type = "XY"
                         plane_info = "XY (horizontal)"
                     elif abs(n.y) > 0.9:
+                        plane_type = "XZ"
                         plane_info = "XZ (vertical-front)"
                     elif abs(n.x) > 0.9:
+                        plane_type = "YZ"
                         plane_info = "YZ (vertical-side)"
                     else:
-                        plane_info = f"Custom [{round(n.x,2)}, {round(n.y,2)}, {round(n.z,2)}]"
+                        plane_type = "Custom"
+                        plane_info = f"Custom normal=[{round(n.x,2)}, {round(n.y,2)}, {round(n.z,2)}]"
+                    
+                    coord_mapping = get_coordinate_mapping(plane_type, n)
+                    
                 if hasattr(geo, 'origin'):
                     o = geo.origin
-                    plane_info += f" at origin [{round(o.x*10,1)}, {round(o.y*10,1)}, {round(o.z*10,1)}] mm"
+                    origin_3d = [round(o.x*10, 2), round(o.y*10, 2), round(o.z*10, 2)]
+                    plane_info += f" at origin {origin_3d} mm"
         except:
             pass
         
@@ -3503,6 +4063,8 @@ def handle_list_sketches(body):
             "profile_count": sketch.profiles.count,
             "curve_count": sketch.sketchCurves.count,
             "plane_info": plane_info,
+            "origin_3d": origin_3d,
+            "coordinate_mapping": coord_mapping,
             "is_fully_constrained": sketch.isFullyConstrained if hasattr(sketch, 'isFullyConstrained') else None
         }
     
@@ -3519,6 +4081,267 @@ def handle_list_sketches(body):
     return {
         "sketches": sketches,
         "count": len(sketches)
+    }
+
+
+def handle_suggest_sketch_coords(body):
+    """Suggest sketch coordinates for a desired 3D bounding box.
+    
+    Given a plane and desired world coordinates, returns the sketch coordinates
+    needed to achieve that positioning.
+    """
+    plane = body.get("plane", "xy").lower()
+    world_min = body.get("world_min", [0, 0, 0])  # [x, y, z] min corner in mm
+    world_max = body.get("world_max", [100, 100, 100])  # [x, y, z] max corner in mm
+    
+    # Calculate sketch coordinates based on plane
+    if plane in ["xy", "horizontal"]:
+        # XY plane: sketch_x = world_x, sketch_y = world_y
+        sketch_corner1 = [world_min[0], world_min[1]]
+        sketch_corner2 = [world_max[0], world_max[1]]
+        extrude_info = {
+            "to_reach_z_min": {"direction": "negative", "distance": abs(world_min[2])},
+            "to_reach_z_max": {"direction": "positive", "distance": abs(world_max[2])},
+            "plane_at_z": 0
+        }
+        explanation = "On XY plane: sketch coordinates map directly to world X and Y"
+        
+    elif plane in ["xz", "vertical_front"]:
+        # XZ plane: sketch_x = world_x, sketch_y = -world_z (FLIPPED!)
+        sketch_corner1 = [world_min[0], -world_max[2]]  # Note: max Z becomes min sketch Y
+        sketch_corner2 = [world_max[0], -world_min[2]]  # Note: min Z becomes max sketch Y
+        extrude_info = {
+            "to_reach_y_min": {"direction": "negative", "distance": abs(world_min[1])},
+            "to_reach_y_max": {"direction": "positive", "distance": abs(world_max[1])},
+            "plane_at_y": 0
+        }
+        explanation = "On XZ plane: sketch_x = world_x, but sketch_y = NEGATIVE world_z (flipped!)"
+        
+    elif plane in ["yz", "vertical_side"]:
+        # YZ plane: sketch_x = -world_z, sketch_y = world_y (X FLIPPED!)
+        sketch_corner1 = [-world_max[2], world_min[1]]  # Note: max Z becomes min sketch X
+        sketch_corner2 = [-world_min[2], world_max[1]]  # Note: min Z becomes max sketch X
+        extrude_info = {
+            "to_reach_x_min": {"direction": "negative", "distance": abs(world_min[0])},
+            "to_reach_x_max": {"direction": "positive", "distance": abs(world_max[0])},
+            "plane_at_x": 0
+        }
+        explanation = "On YZ plane: sketch_x = NEGATIVE world_z (flipped!), sketch_y = world_y"
+    else:
+        return {"error": True, "message": f"Unknown plane: {plane}. Use xy, xz, or yz."}
+    
+    return {
+        "plane": plane,
+        "input_world_bounds": {
+            "min": world_min,
+            "max": world_max
+        },
+        "sketch_rectangle": {
+            "corner1": [round(sketch_corner1[0], 3), round(sketch_corner1[1], 3)],
+            "corner2": [round(sketch_corner2[0], 3), round(sketch_corner2[1], 3)]
+        },
+        "extrude_guidance": extrude_info,
+        "explanation": explanation,
+        "example_usage": f"draw_rectangle(corner1={[round(sketch_corner1[0], 1), round(sketch_corner1[1], 1)]}, corner2={[round(sketch_corner2[0], 1), round(sketch_corner2[1], 1)]})"
+    }
+
+
+def handle_get_model_summary(body):
+    """Get a comprehensive summary of the current model state.
+    
+    Returns world bounds, orientation analysis, component summary with parts,
+    and parameter usage hints.
+    """
+    root = get_root()
+    design = get_design()
+    
+    # Calculate overall world bounds
+    world_min = [float('inf'), float('inf'), float('inf')]
+    world_max = [float('-inf'), float('-inf'), float('-inf')]
+    
+    all_bodies = []
+    
+    # Collect all bodies and their bounds
+    def process_body(b, comp_name):
+        nonlocal world_min, world_max
+        bbox = b.boundingBox
+        
+        # Update world bounds (convert to mm)
+        world_min[0] = min(world_min[0], bbox.minPoint.x * 10)
+        world_min[1] = min(world_min[1], bbox.minPoint.y * 10)
+        world_min[2] = min(world_min[2], bbox.minPoint.z * 10)
+        world_max[0] = max(world_max[0], bbox.maxPoint.x * 10)
+        world_max[1] = max(world_max[1], bbox.maxPoint.y * 10)
+        world_max[2] = max(world_max[2], bbox.maxPoint.z * 10)
+        
+        # Get dimensions
+        width = (bbox.maxPoint.x - bbox.minPoint.x) * 10
+        depth = (bbox.maxPoint.y - bbox.minPoint.y) * 10
+        height = (bbox.maxPoint.z - bbox.minPoint.z) * 10
+        
+        dims = sorted([(width, 'X'), (depth, 'Y'), (height, 'Z')], key=lambda x: x[0], reverse=True)
+        
+        return {
+            "body": b.name,
+            "component": comp_name,
+            "dims_mm": f"{round(dims[0][0], 1)}({dims[0][1]}) × {round(dims[1][0], 1)}({dims[1][1]}) × {round(dims[2][0], 1)}({dims[2][1]})",
+            "z_range": [round(bbox.minPoint.z * 10, 2), round(bbox.maxPoint.z * 10, 2)]
+        }
+    
+    # Root bodies
+    for b in root.bRepBodies:
+        all_bodies.append(process_body(b, "root"))
+    
+    # Component bodies
+    for occ in root.allOccurrences:
+        comp_name = occ.component.name
+        for b in occ.component.bRepBodies:
+            all_bodies.append(process_body(b, comp_name))
+    
+    # Analyze orientation
+    orientation_analysis = {}
+    if world_min[0] != float('inf'):
+        # Check if model extends into negative Z
+        if world_min[2] < -1:  # More than 1mm into -Z
+            if world_max[2] < 1:  # And doesn't go positive
+                orientation_analysis = {
+                    "issue": "Model built into negative Z space",
+                    "z_range": [round(world_min[2], 2), round(world_max[2], 2)],
+                    "suggestion": "Model was likely built with XZ/YZ sketch Y going into -Z. Consider rebuilding with negative sketch Y values to place model in +Z space, or accept current orientation.",
+                    "quick_fix": "Use move_body to translate all bodies by Z offset"
+                }
+            else:
+                orientation_analysis = {
+                    "status": "Model spans both positive and negative Z",
+                    "z_range": [round(world_min[2], 2), round(world_max[2], 2)]
+                }
+        else:
+            orientation_analysis = {
+                "status": "Model in positive Z space (normal orientation)",
+                "z_range": [round(world_min[2], 2), round(world_max[2], 2)]
+            }
+    
+    # Component summary
+    components = []
+    components.append({
+        "name": "root",
+        "body_count": root.bRepBodies.count,
+        "sketch_count": root.sketches.count
+    })
+    for occ in root.allOccurrences:
+        comp = occ.component
+        components.append({
+            "name": comp.name,
+            "body_count": comp.bRepBodies.count,
+            "sketch_count": comp.sketches.count
+        })
+    
+    # Get parameters
+    params = []
+    try:
+        for param in design.userParameters:
+            params.append({
+                "name": param.name,
+                "value": round(param.value * 10, 3) if param.unit == "cm" else param.value,  # Convert to mm
+                "unit": "mm" if param.unit == "cm" else param.unit
+            })
+    except:
+        pass
+    
+    return {
+        "world_bounds": {
+            "min": [round(world_min[0], 2), round(world_min[1], 2), round(world_min[2], 2)] if world_min[0] != float('inf') else None,
+            "max": [round(world_max[0], 2), round(world_max[1], 2), round(world_max[2], 2)] if world_max[0] != float('-inf') else None,
+            "size": [
+                round(world_max[0] - world_min[0], 2) if world_min[0] != float('inf') else 0,
+                round(world_max[1] - world_min[1], 2) if world_min[1] != float('inf') else 0,
+                round(world_max[2] - world_min[2], 2) if world_min[2] != float('inf') else 0
+            ]
+        },
+        "orientation_analysis": orientation_analysis,
+        "components": components,
+        "bodies_summary": all_bodies,
+        "parameters": params,
+        "coordinate_system_reminder": {
+            "X": "Left (-) to Right (+)",
+            "Y": "Front (-) to Back (+)",
+            "Z": "Down (-) to Up (+)",
+            "sketch_gotcha": "On XZ plane, sketch +Y maps to world -Z. On YZ plane, sketch +X maps to world -Z."
+        }
+    }
+
+
+def handle_draw_rectangle_3d(body):
+    """Draw a rectangle using world 3D coordinates instead of sketch coordinates.
+    
+    Automatically converts world coordinates to the appropriate sketch coordinates
+    based on the sketch's plane orientation.
+    """
+    sketch_id = body.get("sketch_id")
+    world_corner1 = body.get("world_corner1")  # [x, y, z] in mm
+    world_corner2 = body.get("world_corner2")  # [x, y, z] in mm
+    
+    if not sketch_id or not world_corner1 or not world_corner2:
+        return {"error": True, "message": "Required: sketch_id, world_corner1, world_corner2"}
+    
+    sketch = get_sketch(sketch_id)
+    plane = sketch.referencePlane
+    
+    # Determine plane type from normal
+    plane_type = "unknown"
+    try:
+        if hasattr(plane, 'geometry'):
+            geo = plane.geometry
+            if hasattr(geo, 'normal'):
+                n = geo.normal
+                if abs(n.z) > 0.9:
+                    plane_type = "XY"
+                elif abs(n.y) > 0.9:
+                    plane_type = "XZ"
+                elif abs(n.x) > 0.9:
+                    plane_type = "YZ"
+    except:
+        return {"error": True, "message": "Could not determine sketch plane orientation"}
+    
+    # Convert world coordinates to sketch coordinates
+    if plane_type == "XY":
+        sketch_c1 = [world_corner1[0], world_corner1[1]]
+        sketch_c2 = [world_corner2[0], world_corner2[1]]
+    elif plane_type == "XZ":
+        # sketch_x = world_x, sketch_y = -world_z
+        sketch_c1 = [world_corner1[0], -world_corner1[2]]
+        sketch_c2 = [world_corner2[0], -world_corner2[2]]
+    elif plane_type == "YZ":
+        # sketch_x = -world_z, sketch_y = world_y
+        sketch_c1 = [-world_corner1[2], world_corner1[1]]
+        sketch_c2 = [-world_corner2[2], world_corner2[1]]
+    else:
+        return {"error": True, "message": f"Unsupported plane type: {plane_type}"}
+    
+    # Draw the rectangle
+    lines = sketch.sketchCurves.sketchLines
+    start_idx = sketch.sketchCurves.count
+    
+    corner1 = point2d(sketch_c1)
+    corner2 = point2d(sketch_c2)
+    
+    rect_lines = lines.addTwoPointRectangle(corner1, corner2)
+    adsk.doEvents()
+    
+    curve_ids = [f"{sketch_id}_curve_{start_idx + i}" for i in range(len(rect_lines))]
+    
+    return {
+        "curve_ids": curve_ids,
+        "plane_type": plane_type,
+        "world_input": {
+            "corner1": world_corner1,
+            "corner2": world_corner2
+        },
+        "sketch_coords_used": {
+            "corner1": [round(sketch_c1[0], 3), round(sketch_c1[1], 3)],
+            "corner2": [round(sketch_c2[0], 3), round(sketch_c2[1], 3)]
+        },
+        "conversion_note": f"World coords converted for {plane_type} plane"
     }
 
 
@@ -3768,6 +4591,228 @@ def handle_get_all_parts(body):
     }
 
 
+# ============================================================================
+# COMPONENT MANAGEMENT
+# ============================================================================
+
+def handle_list_components(body):
+    """List all components in the design with hierarchy information."""
+    root = get_root()
+    
+    components = []
+    
+    def get_component_info(comp, parent_path="", occurrence=None):
+        """Get information about a component."""
+        comp_name = comp.name
+        comp_path = f"{parent_path}/{comp_name}" if parent_path else comp_name
+        
+        # Count bodies and sketches
+        body_count = comp.bRepBodies.count
+        sketch_count = comp.sketches.count
+        
+        # Get child occurrences
+        child_occurrences = []
+        if occurrence:
+            for child_occ in occurrence.childOccurrences:
+                child_occurrences.append({
+                    "name": child_occ.component.name,
+                    "occurrence_name": child_occ.name,
+                    "path": f"{comp_path}/{child_occ.component.name}"
+                })
+        
+        comp_info = {
+            "name": comp_name,
+            "path": comp_path,
+            "body_count": body_count,
+            "sketch_count": sketch_count,
+            "child_occurrences": child_occurrences,
+            "is_root": comp == root
+        }
+        
+        # Add occurrence info if available
+        if occurrence:
+            comp_info["occurrence_name"] = occurrence.name
+            comp_info["is_lightweight"] = occurrence.isLightWeight if hasattr(occurrence, 'isLightWeight') else False
+        
+        return comp_info
+    
+    # Add root component
+    components.append(get_component_info(root, ""))
+    
+    # Add all occurrences (these are component instances)
+    for occ in root.allOccurrences:
+        comp = occ.component
+        # Build parent path from occurrence hierarchy
+        parent_path = ""
+        if hasattr(occ, 'parentOccurrence') and occ.parentOccurrence:
+            parent_comp = occ.parentOccurrence.component
+            parent_path = parent_comp.name
+        
+        comp_info = get_component_info(comp, parent_path, occ)
+        components.append(comp_info)
+    
+    return {
+        "components": components,
+        "total_components": len(components),
+        "root_component": root.name,
+        "total_occurrences": root.allOccurrences.count
+    }
+
+
+def handle_get_component_info(body):
+    """Get detailed information about a specific component."""
+    root = get_root()
+    component_name = body.get("component")
+    
+    if not component_name:
+        raise Exception("Component name is required")
+    
+    # Find the component
+    target_component, target_occ = get_component_by_name(component_name)
+    
+    if not target_component:
+        raise Exception(f"Component not found: {component_name}")
+    
+    # Get component details
+    bodies = []
+    for b in target_component.bRepBodies:
+        bbox = b.boundingBox
+        bodies.append({
+            "name": b.name,
+            "is_solid": b.isSolid,
+            "volume": round(b.volume * 1000, 1),  # cm³ to mm³
+            "bounding_box": {
+                "min": [round(bbox.minPoint.x * 10, 2), round(bbox.minPoint.y * 10, 2), round(bbox.minPoint.z * 10, 2)],
+                "max": [round(bbox.maxPoint.x * 10, 2), round(bbox.maxPoint.y * 10, 2), round(bbox.maxPoint.z * 10, 2)]
+            }
+        })
+    
+    sketches = []
+    for sketch in target_component.sketches:
+        sketches.append({
+            "name": sketch.name,
+            "is_visible": sketch.isVisible,
+            "profiles_count": sketch.profiles.count if hasattr(sketch, 'profiles') else 0
+        })
+    
+    # Get construction planes
+    planes = []
+    for plane in target_component.constructionPlanes:
+        planes.append({
+            "name": plane.name,
+            "is_visible": plane.isVisible
+        })
+    
+    # Get child occurrences
+    child_occurrences = []
+    if target_occ:
+        for child_occ in target_occ.childOccurrences:
+            child_occurrences.append({
+                "name": child_occ.component.name,
+                "occurrence_name": child_occ.name
+            })
+    
+    return {
+        "component": {
+            "name": target_component.name,
+            "is_root": target_component == root,
+            "body_count": len(bodies),
+            "sketch_count": len(sketches),
+            "plane_count": len(planes),
+            "bodies": bodies,
+            "sketches": sketches,
+            "construction_planes": planes,
+            "child_occurrences": child_occurrences
+        },
+        "occurrence": {
+            "name": target_occ.name if target_occ else None,
+            "is_lightweight": target_occ.isLightWeight if target_occ and hasattr(target_occ, 'isLightWeight') else None
+        } if target_occ else None
+    }
+
+
+def handle_create_component(body):
+    """Create a new component in the design."""
+    root = get_root()
+    name = body.get("name")
+    parent_name = body.get("parent")  # Optional: parent component name
+    
+    if not name:
+        raise Exception("Component name is required")
+    
+    # Check if component already exists
+    existing_comp, _ = get_component_by_name(name)
+    if existing_comp:
+        raise Exception(f"Component '{name}' already exists")
+    
+    # Determine parent component
+    if parent_name:
+        parent_comp, parent_occ = get_component_by_name(parent_name)
+        if not parent_comp:
+            raise Exception(f"Parent component not found: {parent_name}")
+        parent = parent_comp
+    else:
+        parent = root
+    
+    # Create new component
+    try:
+        # Create an occurrence of a new component
+        transform = adsk.core.Matrix3D.create()
+        new_occ = parent.occurrences.addNewComponent(transform)
+        new_comp = new_occ.component
+        new_comp.name = name
+        
+        return {
+            "success": True,
+            "component": {
+                "name": new_comp.name,
+                "occurrence_name": new_occ.name,
+                "parent": parent.name,
+                "path": f"{parent.name}/{name}" if parent != root else name
+            }
+        }
+    except Exception as e:
+        raise Exception(f"Failed to create component: {str(e)}")
+
+
+def handle_delete_component(body):
+    """Delete a component from the design."""
+    root = get_root()
+    component_name = body.get("component")
+    
+    if not component_name:
+        raise Exception("Component name is required")
+    
+    # Cannot delete root component
+    if component_name.lower() == "root" or component_name == root.name:
+        raise Exception("Cannot delete root component")
+    
+    # Find the component occurrence
+    target_component, target_occ = get_component_by_name(component_name)
+    
+    if not target_component:
+        raise Exception(f"Component not found: {component_name}")
+    
+    if not target_occ:
+        raise Exception(f"Component '{component_name}' is not an occurrence and cannot be deleted directly")
+    
+    try:
+        # Save names before deleting
+        comp_name = target_component.name
+        occ_name = target_occ.name
+        
+        # Delete the occurrence (this removes the component instance)
+        target_occ.deleteMe()
+        
+        return {
+            "success": True,
+            "deleted_component": comp_name,
+            "deleted_occurrence": occ_name
+        }
+    except Exception as e:
+        raise Exception(f"Failed to delete component: {str(e)}")
+
+
 ROUTES = {
     # Document
     "/ping": handle_ping,
@@ -3782,11 +4827,13 @@ ROUTES = {
     
     # Sketch
     "/create_sketch": handle_create_sketch,
+    "/create_sketch_on_face": handle_create_sketch_on_face,
     "/draw_line": handle_draw_line,
     "/draw_arc": handle_draw_arc,
     "/draw_arc_3point": handle_draw_arc_3point,
     "/draw_circle": handle_draw_circle,
     "/draw_rectangle": handle_draw_rectangle,
+    "/draw_rectangle_3d": handle_draw_rectangle_3d,
     "/draw_spline": handle_draw_spline,
     "/sketch_fillet": handle_sketch_fillet,
     "/finish_sketch": handle_finish_sketch,
@@ -3798,6 +4845,7 @@ ROUTES = {
     "/delete_sketch": handle_delete_sketch,
     "/list_sketches": handle_list_sketches,
     "/sketch_to_3d_coords": handle_sketch_to_3d_coords,
+    "/suggest_sketch_coords": handle_suggest_sketch_coords,
     
     # 3D Features
     "/extrude": handle_extrude,
@@ -3819,8 +4867,17 @@ ROUTES = {
     "/list_bodies": handle_list_bodies,
     "/list_edges": handle_list_edges,
     "/list_faces": handle_list_faces,
+    "/get_face_info": handle_get_face_info,
+    "/find_body_intersections": handle_find_body_intersections,
     "/select_by_position": handle_select_by_position,
     "/get_body_center": handle_get_body_center,
+    "/get_model_summary": handle_get_model_summary,
+    
+    # Component Management
+    "/list_components": handle_list_components,
+    "/get_component_info": handle_get_component_info,
+    "/create_component": handle_create_component,
+    "/delete_component": handle_delete_component,
     
     # Delete
     "/delete_body": handle_delete_body,

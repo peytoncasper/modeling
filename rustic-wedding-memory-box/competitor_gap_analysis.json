@@ -1,0 +1,53 @@
+{
+  "price_gaps": [
+    {
+      "low": 23.63,
+      "high": 49.79,
+      "gap": 26.16,
+      "midpoint": 36.71
+    },
+    {
+      "low": 64.78,
+      "high": 85.99,
+      "gap": 21.209999999999994,
+      "midpoint": 75.38499999999999
+    },
+    {
+      "low": 105.49,
+      "high": 154.0,
+      "gap": 48.510000000000005,
+      "midpoint": 129.745
+    },
+    {
+      "low": 154.0,
+      "high": 279.0,
+      "gap": 125.0,
+      "midpoint": 216.5
+    },
+    {
+      "low": 279.0,
+      "high": 430.75,
+      "gap": 151.75,
+      "midpoint": 354.875
+    }
+  ],
+  "sweet_spot": [
+    {
+      "shop": "HomeLegacyGoods",
+      "price": 105.49,
+      "monthly_sales": 91,
+      "monthly_revenue": 9600,
+      "total_sales": 1427,
+      "reviews": 359,
+      "listing_age_months": 12,
+      "tier": "premium"
+    }
+  ],
+  "underserved": [],
+  "price_stats": {
+    "min": 23.63,
+    "max": 430.75,
+    "median": 89.95,
+    "average": 133.337
+  }
+}

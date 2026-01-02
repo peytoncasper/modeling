@@ -1,0 +1,172 @@
+{
+  "product_lineup": {
+    "memory_keepsake_box": {
+      "product_name": "Memory/Keepsake Box",
+      "use_cases": [
+        "Wedding",
+        "Anniversary",
+        "Memorial",
+        "Baby"
+      ],
+      "variations": [
+        {
+          "variation_name": "Rustic Wedding Keepsake Box",
+          "style": "Rustic Farmhouse",
+          "wood_type": "Reclaimed Oak",
+          "dimensions": "12x8x4 inches",
+          "prompt": "A beautifully crafted wooden memory box for weddings, rustic farmhouse style, made from reclaimed oak wood with natural grain patterns. The box features a hinged lid with a small brass lock, hand-engraved with elegant script font 'Our Forever Starts Here' and wedding date. Interior lined with soft cream-colored velvet. Dimensions: 12x8x4 inches. Soft natural lighting, product photography style, white background, professional Etsy product photo, shallow depth of field, warm wood tones, vintage brass hardware, romantic and timeless aesthetic."
+        },
+        {
+          "variation_name": "Modern Minimalist Anniversary Box",
+          "style": "Modern Minimalist",
+          "wood_type": "Walnut",
+          "dimensions": "10x7x3 inches",
+          "prompt": "A sleek modern wooden keepsake box for anniversaries, minimalist Scandinavian design, made from smooth walnut wood with clean lines. The box features a simple magnetic closure, laser-engraved geometric pattern on the lid with space for personalized names and date. Interior lined with dark gray felt. Dimensions: 10x7x3 inches. Clean studio lighting, minimalist product photography, neutral gray background, sharp focus, contemporary design, sophisticated and elegant aesthetic, perfect for modern couples."
+        },
+        {
+          "variation_name": "Vintage Memorial Keepsake Box",
+          "style": "Vintage Heirloom",
+          "wood_type": "Cherry",
+          "dimensions": "11x8x4 inches",
+          "prompt": "A heartfelt wooden memorial box for remembrance, vintage heirloom style, made from rich cherry wood with hand-carved details. The box features a hinged lid with an antique brass lock, engraved with 'In Loving Memory' in classic serif font, surrounded by delicate floral motifs. Interior lined with burgundy velvet. Dimensions: 11x8x4 inches. Warm candlelit atmosphere, emotional product photography, soft dark background, shallow depth of field, traditional craftsmanship, respectful and dignified aesthetic, perfect for honoring loved ones."
+        },
+        {
+          "variation_name": "Whimsical Baby Memory Box",
+          "style": "Whimsical Nursery",
+          "wood_type": "Maple",
+          "dimensions": "10x7x3 inches",
+          "prompt": "An adorable wooden keepsake box for babies, playful nursery style, made from light maple wood with rounded corners for safety. The box features a hinged lid with a small heart-shaped lock, laser-engraved with 'Baby's First Year' in playful script font, surrounded by cute animal silhouettes (bunny, bear, elephant). Interior lined with soft pastel pink or blue fabric. Dimensions: 10x7x3 inches. Bright cheerful lighting, family-friendly product photography, soft pastel background, warm and inviting aesthetic, perfect for new parents, baby shower gift style."
+        }
+      ]
+    },
+    "baby_growth_chart": {
+      "product_name": "Baby Growth Chart",
+      "use_cases": [
+        "Nursery",
+        "Baby Shower Gift",
+        "Family Keepsake"
+      ],
+      "variations": [
+        {
+          "variation_name": "Rustic Farmhouse Growth Chart",
+          "style": "Rustic Farmhouse",
+          "wood_type": "Reclaimed Barn Wood",
+          "dimensions": "6 feet tall x 8 inches wide",
+          "prompt": "A beautiful wooden growth chart ruler for babies, rustic farmhouse style, made from reclaimed barn wood with natural weathered texture. The chart measures 6 feet tall, 8 inches wide, with hand-painted numbers and measurement marks in white paint. Features a personalized family name at the top in rustic script font, with space for birth date. Includes decorative elements like small painted hearts or stars. Natural wood grain visible, warm lighting, product photography style, white background, charming country aesthetic, perfect for farmhouse nursery decor."
+        },
+        {
+          "variation_name": "Modern Minimalist Growth Chart",
+          "style": "Modern Minimalist",
+          "wood_type": "Birch",
+          "dimensions": "5 feet tall x 6 inches wide",
+          "prompt": "A sleek modern wooden growth chart for children, minimalist Scandinavian design, made from smooth birch wood with clean lines. The chart measures 5 feet tall, 6 inches wide, with laser-engraved numbers and measurement marks in a modern sans-serif font. Features a personalized child's name at the top in elegant script, with minimalist geometric patterns. Natural wood finish with subtle wood grain. Clean studio lighting, minimalist product photography, neutral background, contemporary design, sophisticated nursery decor, perfect for modern homes."
+        },
+        {
+          "variation_name": "Whimsical Nursery Growth Chart",
+          "style": "Whimsical Nursery",
+          "wood_type": "Pine",
+          "dimensions": "5 feet tall x 7 inches wide",
+          "prompt": "An adorable wooden growth chart for babies, playful nursery theme, made from light pine wood with rounded edges. The chart measures 5 feet tall, 7 inches wide, with colorful hand-painted numbers and measurement marks. Features cute animal characters (giraffe, elephant, monkey) along the side, with personalized baby name at the top in playful bubble letters. Includes small decorative elements like clouds, stars, or rainbows. Bright cheerful colors, soft lighting, family-friendly product photography, pastel background, fun and engaging design, perfect for children's rooms."
+        },
+        {
+          "variation_name": "Elegant Engraved Growth Chart",
+          "style": "Elegant Engraved",
+          "wood_type": "Walnut",
+          "dimensions": "6 feet tall x 8 inches wide",
+          "prompt": "A sophisticated wooden growth chart for families, elegant engraved design, made from rich walnut wood with smooth finish. The chart measures 6 feet tall, 8 inches wide, with laser-engraved numbers and measurement marks in classic serif font. Features a personalized family name at the top in elegant script, with space for multiple children's names and dates. Includes subtle decorative border pattern. Rich wood tones, professional lighting, product photography style, neutral background, timeless heirloom quality, perfect for family keepsake."
+        }
+      ]
+    },
+    "memorial_display_box": {
+      "product_name": "Memorial Display Box",
+      "use_cases": [
+        "Pet Memorial",
+        "Human Memorial",
+        "Remembrance"
+      ],
+      "variations": [
+        {
+          "variation_name": "Pet Memorial Shadow Box",
+          "style": "Rustic Farmhouse",
+          "wood_type": "Reclaimed Oak",
+          "dimensions": "12x10x3 inches",
+          "prompt": "A heartfelt wooden memorial display box for pets, rustic farmhouse style, made from reclaimed oak wood with natural grain. The box features a glass front panel, interior space for pet photo, collar, favorite toy, and small urn. Engraved on the front: 'Forever in Our Hearts' in elegant script, with space for pet's name and dates. Includes small paw print motifs. Dimensions: 12x10x3 inches. Warm emotional lighting, respectful product photography, soft neutral background, dignified and loving aesthetic, perfect for honoring beloved pets."
+        },
+        {
+          "variation_name": "Modern Memorial Shadow Box",
+          "style": "Modern Minimalist",
+          "wood_type": "Walnut",
+          "dimensions": "11x9x2.5 inches",
+          "prompt": "A sleek modern wooden memorial display box, minimalist contemporary design, made from smooth walnut wood with clean lines. The box features a clear acrylic front panel, interior space for photo, keepsakes, and small memorial items. Laser-engraved on the front: 'In Loving Memory' in modern sans-serif font, with space for personalized name and dates. Minimalist geometric border pattern. Dimensions: 11x9x2.5 inches. Clean studio lighting, professional product photography, neutral gray background, sophisticated and respectful design, perfect for modern memorials."
+        },
+        {
+          "variation_name": "Vintage Memorial Keepsake Box",
+          "style": "Vintage Heirloom",
+          "wood_type": "Cherry",
+          "dimensions": "12x10x4 inches",
+          "prompt": "A traditional wooden memorial display box, vintage heirloom style, made from rich cherry wood with hand-carved details. The box features a hinged glass front, interior lined with burgundy velvet, space for photo, memorial items, and small urn. Engraved on the front: 'Those We Love Don't Go Away' in classic serif font, surrounded by delicate floral motifs. Includes antique brass hardware. Dimensions: 12x10x4 inches. Warm candlelit atmosphere, emotional product photography, soft dark background, traditional craftsmanship, respectful and dignified aesthetic, perfect for honoring loved ones."
+        },
+        {
+          "variation_name": "Personalized Memorial Box",
+          "style": "Elegant Engraved",
+          "wood_type": "Maple",
+          "dimensions": "11x9x3 inches",
+          "prompt": "A beautiful wooden memorial display box with personalization, elegant engraved design, made from smooth maple wood with natural finish. The box features a clear glass front panel, interior space for photo, keepsakes, and memorial items. Laser-engraved on the front with personalized message, name, and dates in elegant script font. Includes subtle decorative border with meaningful symbols (butterfly, tree, heart). Dimensions: 11x9x3 inches. Soft natural lighting, respectful product photography, neutral background, heartfelt and meaningful design, perfect for personalized memorials."
+        }
+      ]
+    }
+  },
+  "design_guidelines": {
+    "rustic_farmhouse": {
+      "wood_types": [
+        "Reclaimed Oak",
+        "Barn Wood",
+        "Weathered Wood"
+      ],
+      "hardware": "Antique Brass, Vintage Locks",
+      "fonts": "Script, Handwritten, Rustic Serif",
+      "colors": "Natural Wood Tones, Cream, Warm Whites",
+      "details": "Hand-carved, Weathered, Natural Grain Visible"
+    },
+    "modern_minimalist": {
+      "wood_types": [
+        "Walnut",
+        "Birch",
+        "Smooth Finishes"
+      ],
+      "hardware": "Magnetic Closures, Sleek Hardware",
+      "fonts": "Sans-serif, Geometric, Clean Lines",
+      "colors": "Natural Wood, Gray, White, Black",
+      "details": "Laser-engraved, Clean Lines, Geometric Patterns"
+    },
+    "vintage_heirloom": {
+      "wood_types": [
+        "Cherry",
+        "Mahogany",
+        "Rich Tones"
+      ],
+      "hardware": "Antique Brass, Ornate Details",
+      "fonts": "Serif, Classic, Traditional",
+      "colors": "Rich Wood Tones, Burgundy, Gold Accents",
+      "details": "Hand-carved, Ornate, Traditional Motifs"
+    },
+    "whimsical_nursery": {
+      "wood_types": [
+        "Maple",
+        "Pine",
+        "Light Tones"
+      ],
+      "hardware": "Heart-shaped Locks, Playful Elements",
+      "fonts": "Playful Script, Bubble Letters, Fun Fonts",
+      "colors": "Pastels, Bright Colors, Soft Tones",
+      "details": "Animal Motifs, Playful Patterns, Rounded Edges"
+    }
+  },
+  "photography_guidelines": {
+    "lighting": "Soft, Natural, Professional Studio Lighting",
+    "backgrounds": "White, Neutral Gray, Soft Pastels",
+    "depth_of_field": "Shallow for Product Focus",
+    "angles": "Multiple Angles (Front, Side, Interior, Detail Shots)",
+    "style": "Clean, Professional, Etsy-ready"
+  }
+}

@@ -1,0 +1,188 @@
+{
+  "validation_results": {
+    "gaming desk hutch": {
+      "total_listings": 3,
+      "validation_status": "DEAD MARKET",
+      "top_seller_sales": 0,
+      "top_seller_revenue": 0,
+      "note": "All 3 listings show 0 sales - dead market, skip"
+    },
+    "gaming microphone stand": {
+      "total_listings": 24,
+      "validation_status": "DEAD_MARKET",
+      "top_seller_sales": 0,
+      "top_seller_revenue": 0,
+      "note": "All listings show 0 sales - dead market, skip"
+    },
+    "cnc gaming desk": {
+      "total_listings": 29,
+      "validation_status": "LOW_SALES",
+      "top_seller_sales": 8,
+      "top_seller_revenue": 66,
+      "note": "Only 8 sales/month total - very low activity, likely dead market"
+    },
+    "gaming stream deck stand": {
+      "total_listings": 31,
+      "validation_status": "ACTIVE_MARKET",
+      "top_seller_sales": 22,
+      "top_seller_revenue": 990,
+      "note": "22 sales/month, $990/month revenue - ACTIVE MARKET! Good opportunity"
+    },
+    "gaming speaker stand": {
+      "total_listings": 50,
+      "validation_status": "ACTIVE_MARKET",
+      "top_seller_sales": 39,
+      "top_seller_revenue": 1014,
+      "note": "39 sales/month, $1,014/month revenue - ACTIVE MARKET! Good opportunity"
+    },
+    "gaming desk with shelf": {
+      "total_listings": 60,
+      "validation_status": "ACTIVE_MARKET",
+      "top_seller_sales": 10,
+      "top_seller_revenue": 4253,
+      "note": "10 sales/month, $4,253/month revenue - ACTIVE MARKET! High revenue per sale"
+    },
+    "gaming desk with storage": {
+      "total_listings": 70,
+      "validation_status": "LOW_SALES",
+      "top_seller_sales": 1,
+      "top_seller_revenue": 385,
+      "note": "Only 1 sale/month - very low activity"
+    },
+    "gaming monitor riser": {
+      "total_listings": 74,
+      "validation_status": "ACTIVE_MARKET",
+      "top_seller_sales": 15,
+      "top_seller_revenue": 525,
+      "note": "15 sales/month, $525/month revenue - ACTIVE MARKET"
+    },
+    "gaming desk riser": {
+      "total_listings": 78,
+      "validation_status": "LOW_SALES",
+      "top_seller_sales": 6,
+      "top_seller_revenue": 21,
+      "note": "Only 6 sales/month - low activity"
+    },
+    "gaming keyboard stand": {
+      "total_listings": 190,
+      "validation_status": "ACTIVE_MARKET",
+      "top_seller_sales": 19,
+      "top_seller_revenue": 844,
+      "note": "19 sales/month, $844/month revenue - ACTIVE MARKET! Related to controller stand"
+    },
+    "gaming laptop stand": {
+      "total_listings": 167,
+      "validation_status": "ACTIVE_MARKET",
+      "top_seller_sales": 12,
+      "top_seller_revenue": 5988,
+      "note": "12 sales/month, $5,988/month revenue - ACTIVE MARKET! High revenue per sale"
+    },
+    "gaming monitor stand": {
+      "total_listings": 159,
+      "validation_status": "ACTIVE_MARKET",
+      "top_seller_sales": 5,
+      "top_seller_revenue": 2093,
+      "note": "5 sales/month, $2,093/month revenue - ACTIVE MARKET! High revenue per sale"
+    },
+    "gaming cable management": {
+      "total_listings": 189,
+      "validation_status": "ACTIVE_MARKET",
+      "top_seller_sales": 20,
+      "top_seller_revenue": 360,
+      "note": "20 sales/month, $360/month revenue - ACTIVE MARKET"
+    },
+    "gaming desk shelf organizer": {
+      "total_listings": 132,
+      "validation_status": "ACTIVE_MARKET",
+      "top_seller_sales": 40,
+      "top_seller_revenue": 480,
+      "note": "40 sales/month, $480/month revenue - ACTIVE MARKET! High volume"
+    },
+    "gaming desk drawer": {
+      "total_listings": 166,
+      "validation_status": "ACTIVE_MARKET",
+      "top_seller_sales": 12,
+      "top_seller_revenue": 5988,
+      "note": "12 sales/month, $5,988/month revenue - ACTIVE MARKET! High revenue per sale"
+    },
+    "gaming desk tray": {
+      "total_listings": 434,
+      "validation_status": "ACTIVE_MARKET",
+      "top_seller_sales": 12,
+      "top_seller_revenue": 5988,
+      "note": "12 sales/month, $5,988/month revenue - ACTIVE MARKET! High revenue per sale"
+    },
+    "gaming desk shelf": {
+      "total_listings": 1472,
+      "validation_status": "ACTIVE_MARKET",
+      "top_seller_sales": 6,
+      "top_seller_revenue": 11550,
+      "note": "Medium competition, shows sales activity - validate further"
+    },
+    "gaming PC stand": {
+      "total_listings": 1626,
+      "validation_status": "ACTIVE_MARKET",
+      "top_seller_sales": 9,
+      "top_seller_revenue": 1151,
+      "note": "Medium competition, shows sales activity - validate further"
+    },
+    "gaming controller holder": {
+      "total_listings": 5627,
+      "validation_status": "PROVEN_MARKET",
+      "top_seller_sales": 227,
+      "top_seller_revenue": 14072,
+      "note": "ALREADY VALIDATED - Score 68.5, 227 sales/month, $14K/month revenue - RECOMMENDED"
+    }
+  },
+  "summary": {
+    "total_validated": 19,
+    "dead_markets": [
+      "gaming microphone stand"
+    ],
+    "low_sales": [
+      "cnc gaming desk",
+      "gaming desk with storage",
+      "gaming desk riser"
+    ],
+    "active_markets": [
+      "gaming stream deck stand",
+      "gaming speaker stand",
+      "gaming desk with shelf",
+      "gaming monitor riser",
+      "gaming keyboard stand",
+      "gaming laptop stand",
+      "gaming monitor stand",
+      "gaming cable management",
+      "gaming desk shelf organizer",
+      "gaming desk drawer",
+      "gaming desk tray",
+      "gaming desk shelf",
+      "gaming PC stand"
+    ],
+    "proven_markets": [
+      "gaming controller holder"
+    ],
+    "validation_date": "2026-01-01T15:19:45.860953"
+  },
+  "recommendations": {
+    "skip": [
+      "gaming microphone stand",
+      "cnc gaming desk",
+      "gaming desk with storage",
+      "gaming desk riser"
+    ],
+    "investigate_further": [],
+    "proven_opportunity": [
+      "gaming controller holder"
+    ],
+    "top_opportunities": [
+      "gaming desk shelf organizer",
+      "gaming speaker stand",
+      "gaming stream deck stand",
+      "gaming cable management",
+      "gaming keyboard stand",
+      "gaming monitor riser"
+    ],
+    "top_priority_for_validation": []
+  }
+}
