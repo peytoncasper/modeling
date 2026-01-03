@@ -273,3 +273,9 @@ class FrameManager:
             frame = Frame.from_dict(frame_data)
             self.frames[frame.name] = frame
 
+
+
+
+
+
+

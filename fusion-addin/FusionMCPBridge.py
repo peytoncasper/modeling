@@ -224,6 +224,54 @@ def handle_save(body):
         return {"success": True, "path": None}
 
 
+def handle_open_document(body):
+    """Open a local f3d file in Fusion 360."""
+    global app
+    
+    path = body.get("path")
+    if not path:
+        raise Exception("path is required")
+    
+    import os
+    if not os.path.exists(path):
+        raise Exception(f"File not found: {path}")
+    
+    # Check file extension
+    ext = os.path.splitext(path)[1].lower()
+    if ext != ".f3d":
+        raise Exception(f"Unsupported file type: {ext}. Only .f3d files are supported.")
+    
+    # Import the f3d file to a new document
+    import_manager = app.importManager
+    
+    # Create import options for Fusion archive
+    options = import_manager.createFusionArchiveImportOptions(path)
+    
+    # Import to a new document
+    doc = import_manager.importToNewDocument(options)
+    
+    if not doc:
+        raise Exception("Failed to open document")
+    
+    adsk.doEvents()  # Let Fusion initialize the document
+    
+    # Get design info
+    design = app.activeProduct
+    bodies = []
+    if design and hasattr(design, 'rootComponent'):
+        root = design.rootComponent
+        for body in root.bRepBodies:
+            bodies.append(body.name)
+    
+    return {
+        "status": "ok",
+        "path": path,
+        "document_name": doc.name,
+        "bodies": bodies,
+        "message": f"Successfully opened {os.path.basename(path)}"
+    }
+
+
 # ============================================================================
 # REFERENCE GEOMETRY
 # ============================================================================
@@ -560,22 +608,84 @@ def handle_finish_sketch(body):
 def handle_get_sketch_profiles(body):
     sketch = get_sketch(body["sketch_id"])
     
+    # Get sketch plane info for 3D coordinate conversion
+    sketch_plane = sketch.referencePlane
+    plane_origin = None
+    plane_normal = None
+    plane_type = "unknown"
+    
+    try:
+        if hasattr(sketch_plane, 'geometry'):
+            geo = sketch_plane.geometry
+            plane_origin = [geo.origin.x * 10, geo.origin.y * 10, geo.origin.z * 10]
+            plane_normal = [geo.normal.x, geo.normal.y, geo.normal.z]
+            
+            # Determine plane type for coordinate hints
+            nx, ny, nz = abs(geo.normal.x), abs(geo.normal.y), abs(geo.normal.z)
+            if nz > 0.9:
+                plane_type = "XY"
+            elif ny > 0.9:
+                plane_type = "XZ"
+            elif nx > 0.9:
+                plane_type = "YZ"
+    except:
+        pass
+    
     profiles = []
     for i in range(sketch.profiles.count):
         profile = sketch.profiles.item(i)
         bbox = profile.boundingBox
         
-        profiles.append({
+        # 2D bounding box in sketch coordinates
+        sketch_min = [bbox.minPoint.x * 10, bbox.minPoint.y * 10]
+        sketch_max = [bbox.maxPoint.x * 10, bbox.maxPoint.y * 10]
+        
+        # Calculate 3D world position using sketch transform
+        world_min_3d = None
+        world_max_3d = None
+        try:
+            transform = sketch.transform
+            min_pt = adsk.core.Point3D.create(bbox.minPoint.x, bbox.minPoint.y, 0)
+            max_pt = adsk.core.Point3D.create(bbox.maxPoint.x, bbox.maxPoint.y, 0)
+            min_pt.transformBy(transform)
+            max_pt.transformBy(transform)
+            world_min_3d = [min_pt.x * 10, min_pt.y * 10, min_pt.z * 10]
+            world_max_3d = [max_pt.x * 10, max_pt.y * 10, max_pt.z * 10]
+        except:
+            pass
+        
+        profile_info = {
             "profile_id": f"profile_{i}",
             "profile_index": i,
-            "area": profile.areaProperties().area * 100,  # cm² to mm²
-            "bounding_box": {
-                "min": [bbox.minPoint.x * 10, bbox.minPoint.y * 10],
-                "max": [bbox.maxPoint.x * 10, bbox.maxPoint.y * 10]
+            "area_mm2": profile.areaProperties().area * 100,  # cm² to mm²
+            "sketch_bounds": {
+                "min": sketch_min,
+                "max": sketch_max
             }
-        })
+        }
+        
+        # Add 3D world bounds if available
+        if world_min_3d and world_max_3d:
+            profile_info["world_bounds_3d"] = {
+                "min": world_min_3d,
+                "max": world_max_3d
+            }
+        
+        profiles.append(profile_info)
     
-    return {"profiles": profiles}
+    result = {
+        "sketch_id": body["sketch_id"],
+        "profile_count": len(profiles),
+        "profiles": profiles,
+        "plane_type": plane_type
+    }
+    
+    if plane_origin:
+        result["plane_origin"] = plane_origin
+    if plane_normal:
+        result["plane_normal"] = plane_normal
+    
+    return result
 
 
 def handle_list_sketch_dimensions(body):
@@ -749,15 +859,34 @@ def handle_extrude(body):
     # If a target body is specified for join/cut, set the participant bodies
     target_body = None
     if target_body_name and operation in ["join", "cut", "intersect"]:
-        # Find the target body in this component
+        # First try the sketch's component
         for b in sketch_component.bRepBodies:
             if b.name == target_body_name:
                 target_body = b
                 break
         
-        if target_body:
-            # participantBodies expects a list of BRepBody, not ObjectCollection
-            extrude_input.participantBodies = [target_body]
+        # If not found in sketch's component, search all components
+        if not target_body:
+            target_body = find_body_by_name(root, target_body_name)
+        
+        if not target_body:
+            # List available bodies to help debug
+            available_in_sketch_comp = [b.name for b in sketch_component.bRepBodies]
+            all_available = []
+            for b in root.bRepBodies:
+                all_available.append(f"root:{b.name}")
+            for occ in root.allOccurrences:
+                for b in occ.component.bRepBodies:
+                    all_available.append(f"{occ.component.name}:{b.name}")
+            
+            raise Exception(
+                f"Target body '{target_body_name}' not found. "
+                f"Bodies in sketch's component ({sketch_component.name}): {available_in_sketch_comp}. "
+                f"All bodies: {all_available}"
+            )
+        
+        # participantBodies expects a list of BRepBody, not ObjectCollection
+        extrude_input.participantBodies = [target_body]
     
     # Set distance and direction
     if direction == "symmetric":
@@ -773,7 +902,16 @@ def handle_extrude(body):
     extrude = extrudes.add(extrude_input)
     adsk.doEvents()  # Let Fusion process
     
-    body_name = extrude.bodies.item(0).name if extrude.bodies.count > 0 else target_body_name
+    # Count bodies AFTER extrusion (for orphan detection)
+    bodies_after = sketch_component.bRepBodies.count
+    
+    # Determine body_name based on operation type
+    if operation == "cut":
+        # Cut operations don't create bodies - they remove material
+        # body_name should be the target body that was cut
+        body_name = target_body_name if target_body_name else "multiple (no target specified)"
+    else:
+        body_name = extrude.bodies.item(0).name if extrude.bodies.count > 0 else target_body_name
     
     # Rename the body if a name was specified
     if new_body_name and extrude.bodies.count > 0 and operation == "new_body":
@@ -784,16 +922,34 @@ def handle_extrude(body):
         except:
             pass  # If rename fails, keep the auto-generated name
     
-    # Count bodies AFTER extrusion (for orphan detection)
-    bodies_after = sketch_component.bRepBodies.count
-    
     # Build result
     result = {
         "feature_id": extrude.name,
         "body_id": body_name,
         "component": sketch_component.name,
-        "source_sketch": sketch_id
+        "source_sketch": sketch_id,
+        "operation": operation
     }
+    
+    # Handle cut operation feedback
+    if operation == "cut":
+        if not target_body_name:
+            result["warning"] = "CUT_NO_TARGET_SPECIFIED"
+            result["warning_detail"] = (
+                "No target_body was specified for cut operation. "
+                "Fusion cut from ALL intersecting bodies. "
+                "Specify target_body to cut from a specific body only."
+            )
+            # List which bodies might have been affected
+            affected_bodies = [b.name for b in sketch_component.bRepBodies]
+            result["potentially_affected_bodies"] = affected_bodies
+        else:
+            result["cut_from_body"] = target_body_name
+            # Verify the target body still exists (cut might have consumed it entirely)
+            body_still_exists = any(b.name == target_body_name for b in sketch_component.bRepBodies)
+            if not body_still_exists:
+                result["warning"] = "CUT_CONSUMED_BODY"
+                result["warning_detail"] = f"The cut operation completely consumed body '{target_body_name}'"
     
     # CRITICAL: Detect if join operation created orphan body instead of joining
     if operation == "join":
@@ -4992,6 +5148,7 @@ ROUTES = {
     "/get_all_parts": handle_get_all_parts,
     "/info": handle_info,
     "/new_document": handle_new_document,
+    "/open_document": handle_open_document,
     "/save": handle_save,
     
     # Reference Geometry

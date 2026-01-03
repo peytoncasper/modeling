@@ -93,6 +93,17 @@ const TOOLS = [
       required: [],
     },
   },
+  {
+    name: "fusion_open_document",
+    description: "Open a local .f3d file in Fusion 360.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        path: { type: "string", description: "Absolute path to the .f3d file" },
+      },
+      required: ["path"],
+    },
+  },
 
   // ============ Reference Geometry ============
   {
@@ -264,7 +275,7 @@ const TOOLS = [
   },
   {
     name: "fusion_get_sketch_profiles",
-    description: "Get all closed profiles in a sketch.",
+    description: "Get all closed profiles in a sketch with their indices, areas, and bounding boxes. ESSENTIAL for multi-profile sketches - use this to identify which profile_index to use in fusion_extrude. Returns profile_index (0-based), area_mm2, sketch_bounds (2D), and world_bounds_3d (3D coordinates).",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -377,10 +388,19 @@ const TOOLS = [
     name: "fusion_extrude",
     description: `Extrude a sketch profile into a 3D body. Use body_name to give meaningful names instead of 'Body1'. For join/cut operations, specify target_body.
 
+📋 PROFILE SELECTION:
+- For multi-profile sketches, use fusion_get_sketch_profiles() first to see all profiles with indices, areas, and bounds
+- Then specify profile_index (0-based) to select which profile to extrude
+- Default profile_index is 0 (first profile)
+
 ⚠️ JOIN OPERATION CRITICAL REQUIREMENTS:
 - The extruded geometry MUST physically touch/intersect the target_body
 - If they don't touch, Fusion creates an ORPHAN BODY instead of joining (causes "warning": "JOIN_CREATED_ORPHAN_BODY" in response)
 - Common fix: Ensure sketch plane is positioned where it touches the target body's surface
+
+⚠️ CUT OPERATION REQUIREMENTS:
+- For cuts from face-based sketches, use direction="negative" to cut INTO the body (positive goes AWAY from face)
+- Always specify target_body for cut operations to avoid cutting unintended bodies
 
 Example for box joint fingers that join correctly:
 - Front panel at Y=[0,12.7], Z=[12.7,88.9] 
@@ -392,13 +412,13 @@ Example for box joint fingers that join correctly:
       type: "object" as const,
       properties: {
         sketch_id: { type: "string", description: "Source sketch name" },
-        profile_index: { type: "number", description: "Profile index (0-based)" },
+        profile_index: { type: "number", description: "Profile index (0-based). Use fusion_get_sketch_profiles() to see available profiles. Default: 0" },
         distance: { type: "number", description: "Extrusion distance in mm" },
-        direction: { type: "string", enum: ["positive", "negative", "symmetric"], description: "Extrusion direction" },
+        direction: { type: "string", enum: ["positive", "negative", "symmetric"], description: "Extrusion direction. For cuts from face sketches, use 'negative' to cut INTO body" },
         operation: { type: "string", enum: ["new_body", "join", "cut", "intersect"], description: "Boolean operation" },
         body_name: { type: "string", description: "Name for the new body (e.g., 'FrontPanel', 'BottomPlate'). Makes model self-documenting!" },
         component: { type: "string", description: "Optional component name to find sketch in" },
-        target_body: { type: "string", description: "Optional target body name for join/cut operations (must be in same component as sketch)" },
+        target_body: { type: "string", description: "REQUIRED for cut/join operations. Target body name to cut from or join to" },
       },
       required: ["sketch_id", "distance"],
     },
@@ -1104,6 +1124,7 @@ const ENDPOINTS: Record<string, string> = {
   fusion_ping: "/ping",
   fusion_get_document_info: "/info",
   fusion_new_document: "/new_document",
+  fusion_open_document: "/open_document",
   fusion_save: "/save",
   fusion_list_planes: "/list_planes",
   fusion_create_offset_plane: "/create_offset_plane",

@@ -53,3 +53,9 @@ Add to your MCP settings:
 
 This server provides CAM-focused tools only. For design tools (sketches, features, components), use the `fusion-design-mcp-server`.
 
+
+
+
+
+
+
