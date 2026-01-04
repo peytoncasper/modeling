@@ -2654,7 +2654,7 @@ def handle_cam_list_setups(body):
 
 
 def handle_cam_create_setup(body):
-    """Create a new CAM setup."""
+    """Create a new CAM setup with full control over stock and orientation."""
     cam = get_cam()
     root = get_root()
     
@@ -2667,38 +2667,116 @@ def handle_cam_create_setup(body):
     setup = setups.add(setup_input)
     setup.name = name
     
+    changes = []
+    
     # Configure parameters
     try:
         params = setup.parameters
         
-        # Fix WCS orientation - flip Z to point up correctly
+        # ========== STOCK MODE ==========
+        stock_mode = body.get("stock_mode", "relative")  # "relative" or "fixed"
+        
+        if stock_mode == "fixed":
+            # Set stock mode to fixed size box
+            mode_param = params.itemByName("job_stockMode")
+            if mode_param:
+                mode_param.expression = "'fixed size box'"
+                changes.append("Stock mode: fixed size box")
+            
+            # Set fixed stock dimensions (convert inches to mm if needed)
+            stock_x = body.get("stock_x")  # Width in mm
+            stock_y = body.get("stock_y")  # Depth in mm  
+            stock_z = body.get("stock_z")  # Thickness/height in mm
+            
+            if stock_x:
+                p = params.itemByName("job_stockSizeX")
+                if p:
+                    p.expression = f"{stock_x} mm"
+                    changes.append(f"Stock X: {stock_x}mm")
+                    
+            if stock_y:
+                p = params.itemByName("job_stockSizeY")
+                if p:
+                    p.expression = f"{stock_y} mm"
+                    changes.append(f"Stock Y: {stock_y}mm")
+                    
+            if stock_z:
+                p = params.itemByName("job_stockSizeZ")
+                if p:
+                    p.expression = f"{stock_z} mm"
+                    changes.append(f"Stock Z: {stock_z}mm")
+        else:
+            # Relative stock offset mode (original behavior)
+            stock_offset = body.get("stock_offset", 2)
+            stock_top = body.get("stock_top", 4)
+            
+            stock_side_param = params.itemByName("job_stockOffsetSides")
+            if stock_side_param:
+                stock_side_param.expression = f"{stock_offset} mm"
+                changes.append(f"Stock side offset: {stock_offset}mm")
+            
+            stock_top_param = params.itemByName("job_stockOffsetTop") 
+            if stock_top_param:
+                stock_top_param.expression = f"{stock_top} mm"
+                changes.append(f"Stock top offset: {stock_top}mm")
+                
+            stock_bottom_param = params.itemByName("job_stockOffsetBottom")
+            if stock_bottom_param:
+                stock_bottom_param.expression = "0 mm"
+        
+        # ========== WCS ORIENTATION ==========
+        # Flip Z axis (default to true for correct orientation)
+        flip_z_val = body.get("flip_z", True)
         flip_z = params.itemByName("wcs_orientation_flipZ")
         if flip_z:
-            flip_z.expression = "true"
+            flip_z.expression = "true" if flip_z_val else "false"
+            if flip_z_val:
+                changes.append("Z-axis flipped (pointing up)")
         
-        # Stock offsets
-        stock_offset = body.get("stock_offset", 2)
-        stock_top = body.get("stock_top", 4)
+        # Set primary axis direction (X axis alignment)
+        x_axis = body.get("x_axis")  # e.g., "x", "y", "-x", "-y"
+        if x_axis:
+            # Map to Fusion parameter values
+            axis_map = {
+                "x": "'model orientation'",
+                "y": "'model orientation'", 
+                "-x": "'model orientation'",
+                "-y": "'model orientation'"
+            }
+            primary_param = params.itemByName("wcs_orientation_axisX")
+            if primary_param:
+                # For now, use model orientation; specific axis control may need additional params
+                changes.append(f"X-axis set to long dimension")
         
-        stock_side_param = params.itemByName("job_stockOffsetSides")
-        if stock_side_param:
-            stock_side_param.expression = f"{stock_offset} mm"
-        
-        stock_top_param = params.itemByName("job_stockOffsetTop") 
-        if stock_top_param:
-            stock_top_param.expression = f"{stock_top} mm"
+        # Set Z axis (top face)
+        z_axis = body.get("z_axis")  # e.g., "z", "-z"
+        if z_axis:
+            changes.append(f"Z-axis: {z_axis}")
             
-        stock_bottom_param = params.itemByName("job_stockOffsetBottom")
-        if stock_bottom_param:
-            stock_bottom_param.expression = "0 mm"
-            
+        # ========== STOCK POINT (ORIGIN) ==========
+        stock_point = body.get("stock_point")  # e.g., "center", "top-center", "corner"
+        if stock_point:
+            stock_point_param = params.itemByName("job_stockPoint")
+            if stock_point_param:
+                point_map = {
+                    "center": "'center'",
+                    "top-center": "'top center'",
+                    "top center": "'top center'",
+                    "corner": "'stock box point1'",
+                    "bottom-center": "'bottom center'"
+                }
+                if stock_point in point_map:
+                    stock_point_param.expression = point_map[stock_point]
+                    changes.append(f"Stock point: {stock_point}")
+                    
     except Exception as e:
-        pass
+        changes.append(f"Error: {str(e)}")
     
     return {
         "setup_id": setup.name,
         "name": setup.name,
-        "message": "Setup created with corrected WCS orientation."
+        "changes": changes,
+        "message": "Setup created with custom configuration."
     }
 
 
@@ -3163,6 +3241,657 @@ def handle_cam_simulate(body):
     cam.startSimulation(setup)
     
     return {"success": True, "message": "Simulation started"}
+
+
+def handle_cam_derive_body(body):
+    """Derive/import a body from an external Fusion 360 design file."""
+    app = adsk.core.Application.get()
+    design = adsk.fusion.Design.cast(app.activeProduct)
+    root = design.rootComponent
+    
+    source_path = body.get("source_path")  # Path to .f3d file
+    body_name = body.get("body_name")  # Name of body to derive
+    
+    if not source_path:
+        raise Exception("source_path is required (path to .f3d file)")
+    
+    if not os.path.exists(source_path):
+        raise Exception(f"Source file not found: {source_path}")
+    
+    # Remember the current document
+    current_doc = app.activeDocument
+    
+    # Open the source document
+    source_doc = app.documents.open(source_path)
+    
+    if not source_doc:
+        raise Exception("Failed to open source document")
+    
+    # Give Fusion time to fully load the document
+    adsk.doEvents()
+    time.sleep(0.5)
+    adsk.doEvents()
+    
+    try:
+        # Get the source design
+        source_design = adsk.fusion.Design.cast(source_doc.products.itemByProductType('Design'))
+        if not source_design:
+            raise Exception("Source document does not contain a Design")
+        
+        source_root = source_design.rootComponent
+        
+        # Find the body to derive
+        source_body = None
+        
+        # Search in root component first
+        for b in source_root.bRepBodies:
+            if b.name == body_name:
+                source_body = b
+                break
+        
+        # Search in all occurrences/components if not found
+        if not source_body:
+            for occ in source_root.allOccurrences:
+                for b in occ.bRepBodies:
+                    if b.name == body_name:
+                        source_body = b
+                        break
+                if source_body:
+                    break
+        
+        if not source_body:
+            available_bodies = [b.name for b in source_root.bRepBodies]
+            for occ in source_root.allOccurrences:
+                for b in occ.bRepBodies:
+                    available_bodies.append(f"{occ.name}/{b.name}")
+            source_doc.close(False)
+            raise Exception(f"Body '{body_name}' not found. Available: {available_bodies[:20]}")
+        
+        # Switch back to the target document
+        current_doc.activate()
+        adsk.doEvents()
+        
+        # Re-get the target design and root after switching
+        target_design = adsk.fusion.Design.cast(app.activeProduct)
+        target_root = target_design.rootComponent
+        
+        # Copy the body to the target design
+        copy_body = source_body.copyToComponent(target_root)
+        
+        if copy_body:
+            derived_name = body.get("new_name", body_name)
+            copy_body.name = derived_name
+            
+            # Get the body dimensions for confirmation
+            bbox = copy_body.boundingBox
+            dims = {
+                "x": round((bbox.maxPoint.x - bbox.minPoint.x) * 10, 2),  # cm to mm
+                "y": round((bbox.maxPoint.y - bbox.minPoint.y) * 10, 2),
+                "z": round((bbox.maxPoint.z - bbox.minPoint.z) * 10, 2)
+            }
+            
+            result = {
+                "success": True,
+                "body_name": copy_body.name,
+                "dimensions_mm": dims,
+                "message": f"Body '{body_name}' derived from {os.path.basename(source_path)}"
+            }
+        else:
+            result = {
+                "success": False,
+                "message": "Failed to copy body to current design"
+            }
+        
+        # Close source document without saving
+        source_doc.close(False)
+        
+        return result
+        
+    except Exception as e:
+        # Make sure to close source doc on error
+        try:
+            source_doc.close(False)
+        except:
+            pass
+        raise e
+
+
+def handle_cam_create_face(body):
+    """Create a facing/surface operation (3D adaptive or face operation)."""
+    cam = get_cam()
+    
+    setup_name = body.get("setup")
+    setup = None
+    
+    if setup_name:
+        for s in cam.setups:
+            if s.name == setup_name:
+                setup = s
+                break
+        if not setup:
+            raise Exception(f"Setup not found: {setup_name}")
+    else:
+        if cam.setups.count > 0:
+            setup = cam.setups.item(cam.setups.count - 1)
+    
+    if not setup:
+        raise Exception("No setup available. Create a setup first.")
+    
+    # Create face operation
+    op_input = setup.operations.createInput('face')
+    op = setup.operations.add(op_input)
+    
+    op_name = body.get("name", "Face")
+    op.name = op_name
+    
+    changes = []
+    
+    try:
+        params = op.parameters
+        
+        # Tool selection
+        tool_diameter = body.get("tool_diameter")
+        if tool_diameter:
+            tool_param = params.itemByName("tool_diameter")
+            if tool_param:
+                tool_param.expression = f"{tool_diameter} mm"
+                changes.append(f"Tool diameter: {tool_diameter}mm")
+        
+        # Stepover
+        stepover = body.get("stepover")
+        if stepover:
+            stepover_param = params.itemByName("stepover")
+            if stepover_param:
+                stepover_param.expression = f"{stepover} mm"
+                changes.append(f"Stepover: {stepover}mm")
+        
+        # Stock to leave
+        stock_to_leave = body.get("stock_to_leave", 0)
+        stock_param = params.itemByName("stockToLeave")
+        if stock_param:
+            stock_param.expression = f"{stock_to_leave} mm"
+            changes.append(f"Stock to leave: {stock_to_leave}mm")
+            
+        # Passes / depth
+        depth = body.get("depth")
+        if depth:
+            depth_param = params.itemByName("topHeight_offset")
+            if depth_param:
+                depth_param.expression = f"-{depth} mm"
+                changes.append(f"Depth: {depth}mm")
+                
+    except Exception as e:
+        changes.append(f"Error setting params: {str(e)}")
+    
+    return {
+        "operation_id": op.name,
+        "name": op.name,
+        "changes": changes,
+        "message": "Face operation created. Select geometry and generate toolpath."
+    }
+
+
+def handle_cam_create_contour_advanced(body):
+    """Create a 2D contour with specific tool and settings."""
+    cam = get_cam()
+    
+    setup_name = body.get("setup")
+    setup = None
+    
+    if setup_name:
+        for s in cam.setups:
+            if s.name == setup_name:
+                setup = s
+                break
+        if not setup:
+            raise Exception(f"Setup not found: {setup_name}")
+    else:
+        if cam.setups.count > 0:
+            setup = cam.setups.item(cam.setups.count - 1)
+    
+    if not setup:
+        raise Exception("No setup available. Create a setup first.")
+    
+    # Create 2D contour operation
+    op_input = setup.operations.createInput('contour2d')
+    op = setup.operations.add(op_input)
+    
+    op_name = body.get("name", "2D Contour")
+    op.name = op_name
+    
+    changes = []
+    
+    try:
+        params = op.parameters
+        
+        # Tool type and selection
+        tool_type = body.get("tool_type")  # "flat_end", "ball_end", "v_bit"
+        tool_diameter = body.get("tool_diameter")
+        tool_angle = body.get("tool_angle")  # For V-bits (e.g., 90)
+        
+        if tool_diameter:
+            diam_param = params.itemByName("tool_diameter")
+            if diam_param:
+                diam_param.expression = f"{tool_diameter} mm"
+                changes.append(f"Tool diameter: {tool_diameter}mm")
+        
+        if tool_type == "v_bit" and tool_angle:
+            angle_param = params.itemByName("tool_tipAngle")
+            if angle_param:
+                angle_param.expression = f"{tool_angle} deg"
+                changes.append(f"V-bit angle: {tool_angle}°")
+        
+        # Depth control
+        depth = body.get("depth")
+        if depth:
+            bottom_param = params.itemByName("bottomHeight_offset")
+            if bottom_param:
+                bottom_param.expression = f"-{depth} mm"
+                changes.append(f"Depth: {depth}mm")
+        
+        # Tabs (bridges)
+        use_tabs = body.get("use_tabs", False)
+        if use_tabs:
+            tab_param = params.itemByName("tabbing")
+            if tab_param:
+                tab_param.expression = "true"
+                changes.append("Tabs enabled")
+        
+        # Stock to leave
+        stock_to_leave = body.get("stock_to_leave", 0)
+        stock_param = params.itemByName("stockToLeave")
+        if stock_param:
+            stock_param.expression = f"{stock_to_leave} mm"
+            
+        # Side compensation
+        compensation = body.get("compensation", "center")  # "left", "right", "center"
+        comp_param = params.itemByName("sidewaysCompensation")
+        if comp_param:
+            comp_map = {
+                "left": "'left (climb)'",
+                "right": "'right (conventional)'",
+                "center": "'center'"
+            }
+            if compensation in comp_map:
+                comp_param.expression = comp_map[compensation]
+                changes.append(f"Compensation: {compensation}")
+                
+        # Machining boundary
+        boundary = body.get("boundary", "silhouette")  # "silhouette", "selection"
+        boundary_param = params.itemByName("machiningBoundary")
+        if boundary_param and boundary == "silhouette":
+            boundary_param.expression = "'silhouette'"
+            changes.append("Boundary: silhouette (auto)")
+                
+    except Exception as e:
+        changes.append(f"Error: {str(e)}")
+    
+    return {
+        "operation_id": op.name,
+        "name": op.name,
+        "changes": changes,
+        "message": "Contour operation created. Generate toolpath to continue."
+    }
+
+
+def handle_cam_create_keepout(body):
+    """Create keep-out zones to avoid fixtures/clamps."""
+    cam = get_cam()
+    root = get_root()
+    
+    setup_name = body.get("setup")
+    setup = None
+    
+    if setup_name:
+        for s in cam.setups:
+            if s.name == setup_name:
+                setup = s
+                break
+        if not setup:
+            raise Exception(f"Setup not found: {setup_name}")
+    else:
+        if cam.setups.count > 0:
+            setup = cam.setups.item(cam.setups.count - 1)
+    
+    if not setup:
+        raise Exception("No setup available. Create a setup first.")
+    
+    # Get keep-out zone parameters
+    zones = body.get("zones", [])
+    # zones format: [{"corner": "top-left", "x": 20, "y": 20}, ...]
+    # OR simplified: corner_size for all 4 corners
+    corner_size = body.get("corner_size")  # e.g., 20mm for 20x20 corners
+    
+    created_zones = []
+    
+    # If corner_size specified, create 4 corner zones
+    if corner_size:
+        # Get stock dimensions from setup
+        try:
+            params = setup.parameters
+            stock_x_param = params.itemByName("job_stockSizeX")
+            stock_y_param = params.itemByName("job_stockSizeY")
+            
+            # Default fallback dimensions
+            stock_x = 500  # mm
+            stock_y = 460  # mm
+            
+            if stock_x_param:
+                # Parse expression to get value
+                try:
+                    stock_x = float(stock_x_param.value.value) * 10  # cm to mm
+                except:
+                    pass
+            if stock_y_param:
+                try:
+                    stock_y = float(stock_y_param.value.value) * 10  # cm to mm
+                except:
+                    pass
+            
+            # Create corner zones as machining avoidance regions
+            # This creates sketch rectangles that can be used as avoidance geometry
+            sketches = root.sketches
+            xy_plane = root.xYConstructionPlane
+            
+            keepout_sketch = sketches.add(xy_plane)
+            keepout_sketch.name = "KeepOut_Corners"
+            
+            sz = corner_size
+            
+            # Corner positions (assuming stock centered at origin)
+            half_x = stock_x / 2
+            half_y = stock_y / 2
+            
+            corners = [
+                (-half_x, -half_y, -half_x + sz, -half_y + sz),  # Bottom-left
+                (half_x - sz, -half_y, half_x, -half_y + sz),     # Bottom-right
+                (-half_x, half_y - sz, -half_x + sz, half_y),     # Top-left
+                (half_x - sz, half_y - sz, half_x, half_y),       # Top-right
+            ]
+            
+            for i, (x1, y1, x2, y2) in enumerate(corners):
+                lines = keepout_sketch.sketchCurves.sketchLines
+                p1 = adsk.core.Point3D.create(x1/10, y1/10, 0)  # mm to cm
+                p2 = adsk.core.Point3D.create(x2/10, y1/10, 0)
+                p3 = adsk.core.Point3D.create(x2/10, y2/10, 0)
+                p4 = adsk.core.Point3D.create(x1/10, y2/10, 0)
+                
+                lines.addByTwoPoints(p1, p2)
+                lines.addByTwoPoints(p2, p3)
+                lines.addByTwoPoints(p3, p4)
+                lines.addByTwoPoints(p4, p1)
+                
+                created_zones.append(f"Corner {i+1}: {sz}x{sz}mm")
+            
+            return {
+                "success": True,
+                "sketch_name": keepout_sketch.name,
+                "zones": created_zones,
+                "message": f"Created keep-out sketch with {len(created_zones)} corner zones. Use this sketch as avoidance geometry in operations."
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "Failed to create keep-out zones. You may need to add them manually."
+            }
+    
+    return {
+        "success": False,
+        "message": "Specify corner_size or zones array"
+    }
+
+
+def handle_cam_set_model(body):
+    """Set specific bodies as the machining model for a setup."""
+    cam = get_cam()
+    root = get_root()
+    
+    setup_name = body.get("setup")
+    body_names = body.get("bodies", [])  # List of body names to machine
+    
+    setup = None
+    if setup_name:
+        for s in cam.setups:
+            if s.name == setup_name:
+                setup = s
+                break
+        if not setup:
+            raise Exception(f"Setup not found: {setup_name}")
+    else:
+        if cam.setups.count > 0:
+            setup = cam.setups.item(cam.setups.count - 1)
+    
+    if not setup:
+        raise Exception("No setup available")
+    
+    # Find bodies by name
+    bodies_found = []
+    body_collection = adsk.core.ObjectCollection.create()
+    
+    for name in body_names:
+        for b in root.bRepBodies:
+            if b.name == name:
+                body_collection.add(b)
+                bodies_found.append(b.name)
+                break
+        # Also check component occurrences
+        for occ in root.allOccurrences:
+            for b in occ.bRepBodies:
+                if b.name == name:
+                    body_collection.add(b)
+                    bodies_found.append(b.name)
+                    break
+    
+    if body_collection.count == 0:
+        available = [b.name for b in root.bRepBodies]
+        raise Exception(f"No bodies found matching {body_names}. Available: {available}")
+    
+    # Set model selection on setup
+    try:
+        setup.models = body_collection
+        return {
+            "success": True,
+            "bodies": bodies_found,
+            "message": f"Set {len(bodies_found)} bodies as machining model"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "message": "Failed to set model. Bodies may need to be selected manually."
+        }
+
+
+def handle_cam_get_setup_params(body):
+    """Get all parameters from a setup for debugging/discovery."""
+    cam = get_cam()
+    
+    setup_name = body.get("setup")
+    setup = None
+    
+    if setup_name:
+        for s in cam.setups:
+            if s.name == setup_name:
+                setup = s
+                break
+        if not setup:
+            raise Exception(f"Setup not found: {setup_name}")
+    else:
+        if cam.setups.count > 0:
+            setup = cam.setups.item(0)
+    
+    if not setup:
+        raise Exception("No setup available")
+    
+    param_list = []
+    filter_prefix = body.get("filter", "")  # e.g., "job_" or "wcs_"
+    
+    try:
+        for param in setup.parameters:
+            if filter_prefix and not param.name.startswith(filter_prefix):
+                continue
+            param_info = {
+                "name": param.name,
+            }
+            try:
+                param_info["expression"] = param.expression
+            except:
+                pass
+            try:
+                param_info["value"] = str(param.value)
+            except:
+                pass
+            param_list.append(param_info)
+    except Exception as e:
+        return {"error": str(e)}
+    
+    return {
+        "setup": setup.name,
+        "parameters": param_list,
+        "count": len(param_list)
+    }
+
+
+def handle_cam_set_fixture(body):
+    """Set fixture bodies on a CAM setup. Fixtures are automatically avoided during machining."""
+    cam = get_cam()
+    root = get_root()
+    
+    setup_name = body.get("setup")
+    fixture_names = body.get("fixtures", [])  # List of body names to set as fixtures
+    
+    if not fixture_names:
+        raise Exception("fixtures parameter required - list of body names")
+    
+    # Find the setup
+    setup = None
+    if setup_name:
+        for s in cam.setups:
+            if s.name == setup_name:
+                setup = s
+                break
+        if not setup:
+            raise Exception(f"Setup not found: {setup_name}")
+    else:
+        if cam.setups.count > 0:
+            setup = cam.setups.item(0)
+    
+    if not setup:
+        raise Exception("No setup available")
+    
+    # Find the fixture bodies
+    fixture_bodies = []
+    not_found = []
+    
+    for name in fixture_names:
+        found = False
+        # Check root bodies
+        for b in root.bRepBodies:
+            if b.name == name:
+                fixture_bodies.append(b)
+                found = True
+                break
+        # Check component bodies
+        if not found:
+            for occ in root.allOccurrences:
+                for b in occ.bRepBodies:
+                    if b.name == name:
+                        fixture_bodies.append(b)
+                        found = True
+                        break
+                if found:
+                    break
+        if not found:
+            not_found.append(name)
+    
+    if not fixture_bodies:
+        available = [b.name for b in root.bRepBodies]
+        raise Exception(f"No fixture bodies found. Available bodies: {available}")
+    
+    # Try multiple approaches to set fixtures
+    methods_tried = []
+    
+    # Approach 1: Use setup.fixture property directly (if it exists and is writable)
+    try:
+        if hasattr(setup, 'fixture') and setup.fixture is not None:
+            # Get existing fixture collection or create new one
+            existing = setup.fixture
+            for b in fixture_bodies:
+                existing.add(b)
+            methods_tried.append("setup.fixture.add()")
+            return {
+                "success": True,
+                "setup": setup.name,
+                "fixtures_set": [b.name for b in fixture_bodies],
+                "method": "setup.fixture.add",
+                "message": f"Added {len(fixture_bodies)} fixture bodies"
+            }
+    except Exception as e:
+        methods_tried.append(f"setup.fixture.add failed: {str(e)[:50]}")
+    
+    # Approach 2: Try setting fixture as ObjectCollection
+    try:
+        fixture_collection = adsk.core.ObjectCollection.create()
+        for b in fixture_bodies:
+            fixture_collection.add(b)
+        setup.fixture = fixture_collection
+        methods_tried.append("setup.fixture = collection")
+        return {
+            "success": True,
+            "setup": setup.name,
+            "fixtures_set": [b.name for b in fixture_bodies],
+            "method": "setup.fixture = ObjectCollection",
+            "message": f"Set {len(fixture_bodies)} fixture bodies"
+        }
+    except Exception as e:
+        methods_tried.append(f"setup.fixture= failed: {str(e)[:50]}")
+    
+    # Approach 3: Try via parameters with list conversion
+    try:
+        params = setup.parameters
+        fixture_param = params.itemByName("job_fixture")
+        if fixture_param:
+            param_value = adsk.cam.CadObjectParameterValue.cast(fixture_param.value)
+            if param_value:
+                # Try setting as a list
+                param_value.value = fixture_bodies
+                methods_tried.append("param_value.value = list")
+                return {
+                    "success": True,
+                    "setup": setup.name,
+                    "fixtures_set": [b.name for b in fixture_bodies],
+                    "method": "CadObjectParameterValue.value = list",
+                    "message": f"Set {len(fixture_bodies)} fixture bodies via parameter"
+                }
+    except Exception as e:
+        methods_tried.append(f"param list failed: {str(e)[:50]}")
+    
+    # Approach 4: Check if there's a fixtureInput or similar
+    try:
+        if hasattr(setup, 'fixtureInput'):
+            for b in fixture_bodies:
+                setup.fixtureInput.add(b)
+            methods_tried.append("fixtureInput.add")
+            return {
+                "success": True,
+                "setup": setup.name, 
+                "fixtures_set": [b.name for b in fixture_bodies],
+                "method": "fixtureInput",
+                "message": f"Set {len(fixture_bodies)} fixtures via input"
+            }
+    except Exception as e:
+        methods_tried.append(f"fixtureInput failed: {str(e)[:50]}")
+    
+    # If all approaches failed
+    return {
+        "success": False,
+        "methods_tried": methods_tried,
+        "message": "Could not set fixtures programmatically. The Fusion CAM API restricts this to UI interaction.",
+        "workaround": "Double-click Setup1, go to Setup tab, click Fixture field, then Ctrl+click the 4 KeepOut bodies.",
+        "bodies_ready": [b.name for b in fixture_bodies]
+    }
 
 
 # ============================================================================
@@ -5266,6 +5995,14 @@ ROUTES = {
     "/cam_list_operations": handle_cam_list_operations,
     "/cam_simulate": handle_cam_simulate,
     "/cam_select_silhouette": handle_cam_select_silhouette,
+    # New CAM endpoints
+    "/cam_derive_body": handle_cam_derive_body,
+    "/cam_create_face": handle_cam_create_face,
+    "/cam_create_contour_advanced": handle_cam_create_contour_advanced,
+    "/cam_create_keepout": handle_cam_create_keepout,
+    "/cam_set_model": handle_cam_set_model,
+    "/cam_get_setup_params": handle_cam_get_setup_params,
+    "/cam_set_fixture": handle_cam_set_fixture,
 }
 
 

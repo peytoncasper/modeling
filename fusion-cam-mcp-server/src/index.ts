@@ -60,27 +60,141 @@ const server = new Server(
 
 // Tool definitions - CAM only
 const TOOLS = [
-  // ============ CAM Operations ============
+  // ============ CAM Setup & Configuration ============
   {
     name: "fusion_cam_list_setups",
     description: "List all CAM setups in the document.",
-    inputSchema: { type: "object" as const, properties: {}, required: [] },
+    inputSchema: { type: "object" as const, properties: { show_params: { type: "boolean", description: "Include setup parameters for debugging" } }, required: [] },
   },
   {
     name: "fusion_cam_create_setup",
-    description: "Create a new CAM setup for machining.",
+    description: `Create a new CAM setup with full control over stock dimensions and WCS orientation.
+
+STOCK MODES:
+- "fixed": Use exact stock dimensions (stock_x, stock_y, stock_z in mm)
+- "relative": Use offsets from model bounding box (stock_offset, stock_top)
+
+WCS ORIENTATION:
+- flip_z: true (default) makes Z point up from top face
+- x_axis: Set X to align with long dimension of stock
+- stock_point: Origin location ("center", "top-center", "corner")
+
+EXAMPLE for 19.5" x 18" x 18.5mm stock:
+{
+  "name": "TopPanel",
+  "stock_mode": "fixed",
+  "stock_x": 495.3,  // 19.5" in mm
+  "stock_y": 457.2,  // 18" in mm
+  "stock_z": 18.5,
+  "flip_z": true,
+  "stock_point": "top-center"
+}`,
     inputSchema: {
       type: "object" as const,
       properties: {
         name: { type: "string", description: "Setup name" },
-        type: { type: "string", enum: ["milling", "turning", "cutting"], description: "Operation type" },
-        bodies: { type: "array", items: { type: "string" }, description: "Body IDs to machine (empty = all)" },
-        stock_mode: { type: "string", enum: ["relative_box", "fixed_size"], description: "Stock definition mode" },
-        stock_offset: { type: "number", description: "Stock offset in mm (for relative_box)" },
+        stock_mode: { type: "string", enum: ["fixed", "relative"], description: "Stock definition mode: 'fixed' for exact dimensions, 'relative' for offsets" },
+        // Fixed stock dimensions
+        stock_x: { type: "number", description: "Stock width (X) in mm - for fixed mode" },
+        stock_y: { type: "number", description: "Stock depth (Y) in mm - for fixed mode" },
+        stock_z: { type: "number", description: "Stock height/thickness (Z) in mm - for fixed mode" },
+        // Relative stock offsets
+        stock_offset: { type: "number", description: "Stock side offset in mm - for relative mode (default: 2)" },
+        stock_top: { type: "number", description: "Stock top offset in mm - for relative mode (default: 4)" },
+        // WCS orientation
+        flip_z: { type: "boolean", description: "Flip Z axis to point up (default: true)" },
+        x_axis: { type: "string", description: "X axis direction alignment" },
+        z_axis: { type: "string", description: "Z axis direction" },
+        stock_point: { type: "string", enum: ["center", "top-center", "corner", "bottom-center"], description: "Stock origin point (default: center)" },
       },
       required: [],
     },
   },
+  {
+    name: "fusion_cam_fix_setup",
+    description: "Fix WCS orientation and stock offsets on an existing setup.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        setup: { type: "string", description: "Setup name to fix" },
+        stock_offset: { type: "number", description: "Stock side offset in mm" },
+        stock_top: { type: "number", description: "Stock top offset in mm" },
+      },
+      required: ["setup"],
+    },
+  },
+  {
+    name: "fusion_cam_set_model",
+    description: "Set specific bodies as the machining model for a setup.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        setup: { type: "string", description: "Setup name" },
+        bodies: { type: "array", items: { type: "string" }, description: "List of body names to machine" },
+      },
+      required: ["bodies"],
+    },
+  },
+  {
+    name: "fusion_cam_get_setup_params",
+    description: "Get all parameters from a setup for debugging. Use filter to narrow results (e.g., 'job_' for stock params, 'wcs_' for orientation).",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        setup: { type: "string", description: "Setup name" },
+        filter: { type: "string", description: "Filter prefix (e.g., 'job_', 'wcs_')" },
+      },
+      required: [],
+    },
+  },
+  
+  // ============ Model Import ============
+  {
+    name: "fusion_cam_derive_body",
+    description: `Import/derive a body from an external Fusion 360 design file (.f3d).
+
+Use this to bring a body from another design into the current CAM document.
+
+EXAMPLE:
+{
+  "source_path": "/Users/me/Documents/bedside-table.f3d",
+  "body_name": "Top Panel",
+  "new_name": "TopPanel_CAM"
+}`,
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        source_path: { type: "string", description: "Absolute path to the source .f3d file" },
+        body_name: { type: "string", description: "Name of the body to derive from the source" },
+        new_name: { type: "string", description: "Optional new name for the derived body" },
+      },
+      required: ["source_path", "body_name"],
+    },
+  },
+  
+  // ============ Keep-Out Zones ============
+  {
+    name: "fusion_cam_create_keepout",
+    description: `Create keep-out zones to avoid fixtures/clamps during machining.
+
+Creates a sketch with rectangular zones at stock corners for screw/clamp avoidance.
+
+EXAMPLE for 20mm x 20mm corner zones:
+{
+  "setup": "TopPanel",
+  "corner_size": 20
+}`,
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        setup: { type: "string", description: "Setup name" },
+        corner_size: { type: "number", description: "Size of square keep-out zones at each corner in mm (e.g., 20 for 20x20mm)" },
+      },
+      required: ["corner_size"],
+    },
+  },
+  
+  // ============ Tools ============
   {
     name: "fusion_cam_list_tools",
     description: "List available cutting tools from the tool library.",
@@ -92,9 +206,36 @@ const TOOLS = [
       required: [],
     },
   },
+  
+  // ============ Operations ============
+  {
+    name: "fusion_cam_create_face",
+    description: `Create a facing/surface operation for the top of stock.
+
+EXAMPLE:
+{
+  "setup": "TopPanel",
+  "name": "Face Top",
+  "tool_diameter": 25,
+  "stepover": 15,
+  "stock_to_leave": 0
+}`,
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        setup: { type: "string", description: "Setup name" },
+        name: { type: "string", description: "Operation name" },
+        tool_diameter: { type: "number", description: "Tool diameter in mm" },
+        stepover: { type: "number", description: "Stepover distance in mm" },
+        stock_to_leave: { type: "number", description: "Stock to leave in mm (default: 0)" },
+        depth: { type: "number", description: "Facing depth in mm" },
+      },
+      required: [],
+    },
+  },
   {
     name: "fusion_cam_create_2d_contour",
-    description: "Create a 2D contour toolpath to cut around edges.",
+    description: "Create a basic 2D contour toolpath to cut around edges.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -102,6 +243,39 @@ const TOOLS = [
         name: { type: "string", description: "Operation name" },
         tool_diameter: { type: "number", description: "Tool diameter in mm" },
         depth: { type: "number", description: "Cut depth in mm" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "fusion_cam_create_contour_advanced",
+    description: `Create a 2D contour with specific tool selection and advanced settings.
+
+Supports flat end mills, ball end mills, and V-bits.
+
+EXAMPLE for 90° V-bit contour:
+{
+  "setup": "TopPanel",
+  "name": "V-Carve Edge",
+  "tool_type": "v_bit",
+  "tool_diameter": 6.35,
+  "tool_angle": 90,
+  "depth": 3,
+  "compensation": "center"
+}`,
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        setup: { type: "string", description: "Setup name" },
+        name: { type: "string", description: "Operation name" },
+        tool_type: { type: "string", enum: ["flat_end", "ball_end", "v_bit"], description: "Tool type" },
+        tool_diameter: { type: "number", description: "Tool diameter in mm" },
+        tool_angle: { type: "number", description: "V-bit tip angle in degrees (e.g., 90 for 90° V-bit)" },
+        depth: { type: "number", description: "Cut depth in mm" },
+        use_tabs: { type: "boolean", description: "Add holding tabs/bridges" },
+        stock_to_leave: { type: "number", description: "Stock to leave in mm" },
+        compensation: { type: "string", enum: ["left", "right", "center"], description: "Side compensation (default: center)" },
+        boundary: { type: "string", enum: ["silhouette", "selection"], description: "Machining boundary mode (default: silhouette)" },
       },
       required: [],
     },
@@ -133,6 +307,19 @@ const TOOLS = [
     },
   },
   {
+    name: "fusion_cam_select_silhouette",
+    description: "Set an operation to use silhouette (auto) geometry selection mode.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        operation: { type: "string", description: "Operation name to configure" },
+      },
+      required: ["operation"],
+    },
+  },
+  
+  // ============ Generation & Output ============
+  {
     name: "fusion_cam_generate_all",
     description: "Generate all toolpaths in a setup.",
     inputSchema: {
@@ -163,6 +350,7 @@ const TOOLS = [
       type: "object" as const,
       properties: {
         setup: { type: "string", description: "Setup name" },
+        show_params: { type: "boolean", description: "Include operation parameters" },
       },
       required: [],
     },
@@ -182,13 +370,31 @@ const TOOLS = [
 
 // Endpoint mapping
 const ENDPOINTS: Record<string, string> = {
-  // CAM
+  // CAM Setup & Configuration
   fusion_cam_list_setups: "/cam_list_setups",
   fusion_cam_create_setup: "/cam_create_setup",
+  fusion_cam_fix_setup: "/cam_fix_setup",
+  fusion_cam_set_model: "/cam_set_model",
+  fusion_cam_get_setup_params: "/cam_get_setup_params",
+  
+  // Model Import
+  fusion_cam_derive_body: "/cam_derive_body",
+  
+  // Keep-Out Zones
+  fusion_cam_create_keepout: "/cam_create_keepout",
+  
+  // Tools
   fusion_cam_list_tools: "/cam_list_tools",
+  
+  // Operations
+  fusion_cam_create_face: "/cam_create_face",
   fusion_cam_create_2d_contour: "/cam_create_2d_contour",
+  fusion_cam_create_contour_advanced: "/cam_create_contour_advanced",
   fusion_cam_create_2d_pocket: "/cam_create_2d_pocket",
   fusion_cam_create_engrave: "/cam_create_engrave",
+  fusion_cam_select_silhouette: "/cam_select_silhouette",
+  
+  // Generation & Output
   fusion_cam_generate_all: "/cam_generate_all",
   fusion_cam_post_process: "/cam_post_process",
   fusion_cam_list_operations: "/cam_list_operations",
@@ -228,6 +434,7 @@ async function main() {
 }
 
 main().catch(console.error);
+
 
 
 
