@@ -2827,41 +2827,196 @@ def handle_cam_fix_setup(body):
 
 
 def handle_cam_list_tools(body):
-    """List available tools from tool library."""
-    cam = get_cam()
+    """List available tools from document and tool libraries."""
+    import adsk.cam
     
-    tool_type = body.get("type")  # flat_end, ball_end, bull_nose, v_bit, drill
+    cam = get_cam()
+    tool_type_filter = body.get("type")  # flat_end, ball_end, bull_nose, v_bit, drill, chamfer
     
     tools = []
+    sources_checked = []
     
-    # Access tool library
-    lib_mgr = cam.toolLibraries
-    
-    # Get local tool library
-    tool_libs = lib_mgr.toolLibraries
-    if tool_libs.count > 0:
-        lib = tool_libs.item(0)
+    # FIRST: Get tools from document (existing operations)
+    try:
+        doc_tools = set()  # Track unique tools
+        debug_info = []
+        for setup in cam.setups:
+            for op in setup.allOperations:
+                try:
+                    # Try different ways to get tool
+                    tool = None
+                    tool_source = ""
+                    
+                    if hasattr(op, 'tool'):
+                        tool = op.tool
+                        tool_source = "op.tool"
+                    
+                    if not tool and hasattr(op, 'activeTool'):
+                        tool = op.activeTool
+                        tool_source = "op.activeTool"
+                    
+                    # Debug info
+                    debug_info.append(f"{op.name}: tool={tool}, source={tool_source}, hasToolpath={op.hasToolpath if hasattr(op, 'hasToolpath') else 'N/A'}")
+                        
+                    if tool:
+                        try:
+                            import json
+                            tool_json_str = tool.toJson()
+                            tool_json = json.loads(tool_json_str)
+                            debug_info.append(f"{op.name}: toJson success, keys={list(tool_json.keys())[:5]}")
+                        except Exception as json_err:
+                            debug_info.append(f"{op.name}: toJson failed: {json_err}")
+                            # Try to get info directly from tool object
+                            tool_json = {
+                                "description": tool.description if hasattr(tool, 'description') else "Unknown",
+                                "type": str(tool.type) if hasattr(tool, 'type') else "Unknown",
+                            }
+                        
+                        desc = tool_json.get("description", "")
+                        geom = tool_json.get("geometry", {})
+                        tool_id = desc + str(geom.get("DC", 0))
+                        debug_info.append(f"{op.name}: desc='{desc}', geom_keys={list(geom.keys())[:3] if geom else 'none'}")
+                        
+                        if tool_id not in doc_tools:
+                            doc_tools.add(tool_id)
+                            
+                            tool_info = {
+                                "source": "Document",
+                                "from_operation": op.name,
+                                "description": tool_json.get("description", ""),
+                                "type": tool_json.get("type", ""),
+                            }
+                            
+                            # Get geometry
+                            geometry = tool_json.get("geometry", {})
+                            if geometry:
+                                tool_info["diameter_mm"] = geometry.get("DC", 0)
+                                tool_info["flute_length_mm"] = geometry.get("LCF", 0)
+                                tool_info["taper_angle"] = geometry.get("TA", 0)
+                                tool_info["tip_angle"] = geometry.get("SIG", 0)
+                                tool_info["tip_diameter"] = geometry.get("SFDM", 0)
+                            
+                            # Get post-processor info
+                            post = tool_json.get("post-process", {})
+                            if post:
+                                tool_info["tool_number"] = post.get("number", 0)
+                            
+                            # Filter
+                            tool_type_str = str(tool_info.get("type", "")).lower() + str(tool_info.get("description", "")).lower()
+                            if tool_type_filter:
+                                filter_lower = tool_type_filter.lower()
+                                if filter_lower in ["chamfer", "v_bit", "v-bit", "vbit"]:
+                                    if "chamfer" not in tool_type_str and "v-bit" not in tool_type_str and "v bit" not in tool_type_str:
+                                        continue
+                                elif filter_lower not in tool_type_str:
+                                    continue
+                            
+                            tools.append(tool_info)
+                except:
+                    pass
         
-        for i in range(min(lib.count, 50)):  # Limit to 50 tools
-            tool = lib.item(i)
-            
-            tool_info = {
-                "name": tool.description,
-                "type": str(tool.type),
-                "diameter": tool.diameter * 10,  # cm to mm
-                "number": tool.number
-            }
-            
-            # Filter by type if specified
-            if tool_type:
-                if tool_type == "flat_end" and tool.type != adsk.cam.ToolTypes.FlatEndMillTool:
-                    continue
-                elif tool_type == "ball_end" and tool.type != adsk.cam.ToolTypes.BallEndMillTool:
-                    continue
-            
-            tools.append(tool_info)
+        sources_checked.append(f"Document: {len(doc_tools)} unique tools")
+        if debug_info:
+            sources_checked.extend(debug_info[:5])  # Add first 5 debug entries
+    except Exception as e:
+        sources_checked.append(f"Document: error - {str(e)}")
     
-    return {"tools": tools}
+    # SECOND: Try tool libraries
+    try:
+        camManager = adsk.cam.CAMManager.get()
+        libraryManager = camManager.libraryManager
+        toolLibraries = libraryManager.toolLibraries
+        
+        locations = [
+            (adsk.cam.LibraryLocations.LocalLibraryLocation, "Local"),
+        ]
+        
+        for location, loc_name in locations:
+            try:
+                libUrl = toolLibraries.urlByLocation(location)
+                sources_checked.append(f"{loc_name} URL: {libUrl.toString() if libUrl else 'None'}")
+                if libUrl:
+                    # Try to get child URLs (folders/libraries in the location)
+                    childUrls = toolLibraries.childAssetURLs(libUrl)
+                    child_count = len(childUrls) if childUrls else 0
+                    sources_checked.append(f"{loc_name} children: {child_count}")
+                    
+                    # Try each child URL
+                    if childUrls and child_count > 0:
+                        for j, childUrl in enumerate(childUrls):
+                            sources_checked.append(f"  Child {j}: {childUrl.toString()}")
+                            lib = toolLibraries.toolLibraryAtURL(childUrl)
+                            if lib and lib.count > 0:
+                                sources_checked.append(f"  -> {lib.count} tools")
+                                for i in range(min(lib.count, 50)):
+                                    try:
+                                        tool = lib.item(i)
+                                        if tool:
+                                            import json
+                                            tool_json = json.loads(tool.toJson())
+                                            tool_info = {
+                                                "source": loc_name,
+                                                "index": i,
+                                                "description": tool_json.get("description", ""),
+                                                "type": tool_json.get("type", ""),
+                                                "tool_number": tool_json.get("post-process", {}).get("number", i+1)
+                                            }
+                                            geometry = tool_json.get("geometry", {})
+                                            if geometry:
+                                                tool_info["diameter_mm"] = geometry.get("DC", 0)
+                                                tool_info["taper_angle"] = geometry.get("TA", 0)
+                                            tools.append(tool_info)
+                                    except Exception as te:
+                                        sources_checked.append(f"  Tool {i} error: {te}")
+                    
+                    # Also try direct access
+                    lib = toolLibraries.toolLibraryAtURL(libUrl)
+                    if lib and lib.count > 0:
+                        sources_checked.append(f"{loc_name}: {lib.count} tools")
+                        
+                        for i in range(min(lib.count, 50)):
+                            try:
+                                tool = lib.item(i)
+                                if tool:
+                                    import json
+                                    tool_json = json.loads(tool.toJson())
+                                    
+                                    tool_info = {
+                                        "source": loc_name,
+                                        "index": i,
+                                        "description": tool_json.get("description", ""),
+                                        "type": tool_json.get("type", ""),
+                                    }
+                                    
+                                    geometry = tool_json.get("geometry", {})
+                                    if geometry:
+                                        tool_info["diameter_mm"] = geometry.get("DC", 0)
+                                        tool_info["taper_angle"] = geometry.get("TA", 0)
+                                    
+                                    # Filter
+                                    tool_type_str = str(tool_info.get("type", "")).lower()
+                                    if tool_type_filter:
+                                        filter_lower = tool_type_filter.lower()
+                                        if filter_lower in ["chamfer", "v_bit"]:
+                                            if "chamfer" not in tool_type_str:
+                                                continue
+                                        elif filter_lower not in tool_type_str:
+                                            continue
+                                    
+                                    tools.append(tool_info)
+                            except:
+                                pass
+            except Exception as e:
+                sources_checked.append(f"{loc_name}: error - {str(e)}")
+                
+    except Exception as e:
+        sources_checked.append(f"Libraries: error - {str(e)}")
+    
+    return {
+        "sources_checked": sources_checked,
+        "tool_count": len(tools),
+        "tools": tools
+    }
 
 
 def handle_cam_create_2d_contour(body):
@@ -3015,6 +3170,343 @@ def handle_cam_create_engrave(body):
     return {
         "operation_id": op.name,
         "name": op.name
+    }
+
+
+def handle_cam_create_trace(body):
+    """Create a Trace toolpath - great for V-bit miter cuts with multiple depths.
+    
+    Trace follows a sketch curve and supports multiple depth passes,
+    making it ideal for V-bit operations where 2D Contour/Chamfer don't allow stepdown.
+    """
+    cam = get_cam()
+    root = get_root()
+    
+    setup_name = body.get("setup")
+    setup = None
+    
+    if setup_name:
+        for s in cam.setups:
+            if s.name == setup_name:
+                setup = s
+                break
+        if not setup:
+            raise Exception(f"Setup not found: {setup_name}")
+    else:
+        if cam.setups.count > 0:
+            setup = cam.setups.item(cam.setups.count - 1)
+    
+    if not setup:
+        raise Exception("No setup available. Create a setup first.")
+    
+    import adsk.core
+    import adsk.cam
+    
+    changes = []
+    curves_selected = 0
+    
+    # Get tool parameters
+    tool_number = body.get("tool_number")  # NEW: find tool by number
+    tool_type = body.get("tool_type", "chamfer mill")
+    tool_angle = body.get("tool_angle", 90)
+    tool_diameter = body.get("tool_diameter", 25.4)
+    
+    # Find sketch curves BEFORE creating operation
+    sketch_id = body.get("sketch_id")
+    sketch = None
+    sketch_curves = []
+    
+    if sketch_id:
+        for sk in root.sketches:
+            if sk.name == sketch_id:
+                sketch = sk
+                break
+        if sketch:
+            for curve in sketch.sketchCurves:
+                sketch_curves.append(curve)
+            changes.append(f"Found {len(sketch_curves)} curves in {sketch_id}")
+    
+    # Create Trace operation
+    op_input = setup.operations.createInput('trace')
+    
+    # Try to set tool on input BEFORE adding operation
+    tool_found = False
+    try:
+        import json
+        # Get the CAM manager and tool library
+        camManager = adsk.cam.CAMManager.get()
+        libraryManager = camManager.libraryManager
+        toolLibraries = libraryManager.toolLibraries
+        
+        # Try local library first - need to check child URLs
+        localLibUrl = toolLibraries.urlByLocation(adsk.cam.LibraryLocations.LocalLibraryLocation)
+        if localLibUrl:
+            childUrls = toolLibraries.childAssetURLs(localLibUrl)
+            if childUrls:
+                for childUrl in childUrls:
+                    try:
+                        lib = toolLibraries.toolLibraryAtURL(childUrl)
+                        if lib and lib.count > 0:
+                            for i in range(lib.count):
+                                tool = lib.item(i)
+                                if tool:
+                                    tool_json = json.loads(tool.toJson())
+                                    post_proc = tool_json.get("post-process", {})
+                                    this_tool_num = post_proc.get("number", -1)
+                                    
+                                    # Match by tool number if specified
+                                    if tool_number is not None and this_tool_num == tool_number:
+                                        op_input.tool = tool
+                                        tool_found = True
+                                        changes.append(f"Found tool #{tool_number} in library")
+                                        break
+                                    
+                                    # Otherwise match by type (chamfer/v-bit)
+                                    if not tool_number and not tool_found:
+                                        tool_type_str = tool_json.get("type", "").lower()
+                                        if 'chamfer' in tool_type_str:
+                                            op_input.tool = tool
+                                            tool_found = True
+                                            changes.append(f"Found chamfer mill in library")
+                                            break
+                            if tool_found:
+                                break
+                    except Exception as e:
+                        changes.append(f"Library scan error: {str(e)}")
+        
+        if not tool_found:
+            changes.append(f"Tool #{tool_number} not found in library - will use default tool")
+            
+    except Exception as e:
+        changes.append(f"Tool library search: {str(e)}")
+    
+    # Try to set geometry on input BEFORE adding operation
+    if sketch_curves:
+        try:
+            # Create object collection for curves
+            curve_collection = adsk.core.ObjectCollection.create()
+            for curve in sketch_curves:
+                curve_collection.add(curve)
+            
+            # Try different methods to set geometry on input
+            if hasattr(op_input, 'curveSelections'):
+                for curve in sketch_curves:
+                    try:
+                        op_input.curveSelections.add(curve)
+                        curves_selected += 1
+                    except:
+                        pass
+                if curves_selected > 0:
+                    changes.append(f"Set {curves_selected} curves on input.curveSelections")
+            
+            if curves_selected == 0 and hasattr(op_input, 'geometry'):
+                try:
+                    op_input.geometry = curve_collection
+                    curves_selected = len(sketch_curves)
+                    changes.append(f"Set {curves_selected} curves on input.geometry")
+                except Exception as e:
+                    changes.append(f"input.geometry failed: {str(e)}")
+                    
+        except Exception as e:
+            changes.append(f"Geometry setup error: {str(e)}")
+    
+    # Now add the operation
+    op = setup.operations.add(op_input)
+    
+    op_name = body.get("name", "Trace")
+    op.name = op_name
+    
+    params = op.parameters
+    
+    # If curves weren't set on input, try on operation via the curves parameter
+    changes.append(f"Attempting curves: curves_selected={curves_selected}, sketch_curves={len(sketch_curves)}")
+    if curves_selected == 0 and sketch_curves:
+        try:
+            # Get the curves parameter - this is a CadContours2dParameterValue
+            curves_param = params.itemByName("curves")
+            changes.append(f"curves_param: {curves_param is not None}, value: {curves_param.value is not None if curves_param else 'N/A'}")
+            if curves_param and curves_param.value:
+                cv = curves_param.value
+                
+                # Use applyCurveSelections method with CurveSelections object
+                changes.append(f"cv has applyCurveSelections: {hasattr(cv, 'applyCurveSelections')}")
+                if hasattr(cv, 'applyCurveSelections'):
+                    try:
+                        # Get existing CurveSelections object
+                        curve_sels = cv.getCurveSelections()
+                        changes.append(f"curve_sels: {curve_sels is not None}")
+                        
+                        changes.append(f"CHECKPOINT: about to check curve_sels={curve_sels is not None}")
+                        if curve_sels is not None:
+                            changes.append(f"INSIDE IF: curve_sels is truthy")
+                            # Use createNewChainSelection to add curves
+                            changes.append(f"Looping through {len(sketch_curves)} curves")
+                            for i, curve in enumerate(sketch_curves):
+                                changes.append(f"Curve {i}: {type(curve).__name__}")
+                                try:
+                                    # createNewChainSelection() creates empty chain, then we add curve
+                                    chain = curve_sels.createNewChainSelection()
+                                    changes.append(f"Chain {i} created: {chain is not None}")
+                                    if chain:
+                                        # Check what methods chain has
+                                        chain_methods = [m for m in dir(chain) if not m.startswith('_')][:10]
+                                        changes.append(f"Chain methods: {chain_methods}")
+                                        # Try to add curve to chain
+                                        if hasattr(chain, 'inputGeometry'):
+                                            try:
+                                                chain.inputGeometry = [curve]
+                                                curves_selected += 1
+                                                changes.append(f"Set inputGeometry for curve {i}")
+                                            except Exception as ig_err:
+                                                changes.append(f"inputGeometry error: {str(ig_err)[:40]}")
+                                        elif hasattr(chain, 'add'):
+                                            chain.add(curve)
+                                            curves_selected += 1
+                                except Exception as chain_err:
+                                    changes.append(f"createNewChainSelection error {i}: {str(chain_err)}")
+                            
+                            if curves_selected > 0:
+                                # Apply the modified selections back
+                                cv.applyCurveSelections(curve_sels)
+                                changes.append(f"Applied {curves_selected} curves via createNewChainSelection")
+                    except Exception as ge:
+                        changes.append(f"getCurveSelections error: {str(ge)}")
+                else:
+                    changes.append("applyCurveSelections method not found")
+        except Exception as e:
+            changes.append(f"curves param access failed: {str(e)}")
+    
+    try:
+        params = op.parameters
+        
+        # Set depth via axialOffset - this is the key parameter for Trace depth control!
+        # For V-bits, axialOffset pushes the tool tip deeper (negative = into material)
+        depth = body.get("depth")
+        if depth:
+            # Try axialOffset first (primary method for Trace operations)
+            axial_offset = params.itemByName("axialOffset")
+            if axial_offset:
+                axial_offset.expression = f"-{depth} mm"
+                changes.append(f"Axial offset: -{depth}mm")
+            
+            # Also try bottomHeight_offset as fallback
+            bottom_offset = params.itemByName("bottomHeight_offset")
+            if bottom_offset:
+                bottom_offset.expression = f"-{depth} mm"
+                changes.append(f"Bottom height offset: -{depth}mm")
+        
+        # Enable multiple depths (this is the key feature for V-bits!)
+        stepdown = body.get("stepdown")
+        if stepdown:
+            # Enable multiple depths - correct parameter name is doMultipleDepths
+            use_multiple = params.itemByName("doMultipleDepths")
+            if use_multiple:
+                use_multiple.expression = "true"
+                changes.append("Multiple depths: enabled (doMultipleDepths)")
+            
+            # Set stepdown value
+            stepdown_param = params.itemByName("maximumStepdown")
+            if stepdown_param:
+                stepdown_param.expression = f"{stepdown} mm"
+                changes.append(f"Stepdown: {stepdown}mm")
+        
+        # Number of passes (alternative to stepdown)
+        num_passes = body.get("passes")
+        if num_passes:
+            passes_param = params.itemByName("numberOfStepdowns")
+            if passes_param:
+                passes_param.expression = str(num_passes)
+                changes.append(f"Passes: {num_passes}")
+        
+        # Axial offset (shifts the cut depth)
+        axial_offset = body.get("axial_offset")
+        if axial_offset is not None:
+            offset_param = params.itemByName("axialOffset")
+            if offset_param:
+                offset_param.expression = f"{axial_offset} mm"
+                changes.append(f"Axial offset: {axial_offset}mm")
+        
+        # Heights - clearance, retract, feed
+        clearance_height = body.get("clearance_height", 30)  # Default 30mm from stock top
+        retract_height = body.get("retract_height", 10)  # Default 10mm
+        feed_height = body.get("feed_height", 5)  # Default 5mm
+        
+        # Set clearance height (from stock top)
+        try:
+            ch_mode = params.itemByName("clearanceHeight_mode")
+            if ch_mode:
+                ch_mode.expression = "'from stock top'"
+            ch_offset = params.itemByName("clearanceHeight_offset")
+            if ch_offset:
+                ch_offset.expression = f"{clearance_height} mm"
+                changes.append(f"Clearance height: {clearance_height}mm from stock top")
+        except Exception as e:
+            changes.append(f"Clearance height error: {str(e)[:40]}")
+        
+        # Set retract height (from stock top)
+        try:
+            rh_mode = params.itemByName("retractHeight_mode")
+            if rh_mode:
+                rh_mode.expression = "'from stock top'"
+            rh_offset = params.itemByName("retractHeight_offset")
+            if rh_offset:
+                rh_offset.expression = f"{retract_height} mm"
+                changes.append(f"Retract height: {retract_height}mm from stock top")
+        except Exception as e:
+            changes.append(f"Retract height error: {str(e)[:40]}")
+        
+        # Set feed height (from stock top) 
+        try:
+            fh_mode = params.itemByName("feedHeight_mode")
+            if fh_mode:
+                fh_mode.expression = "'from stock top'"
+            fh_offset = params.itemByName("feedHeight_offset")
+            if fh_offset:
+                fh_offset.expression = f"{feed_height} mm"
+                changes.append(f"Feed height: {feed_height}mm from stock top")
+        except Exception as e:
+            changes.append(f"Feed height error: {str(e)[:40]}")
+        
+        # Sideways compensation
+        compensation = body.get("compensation", "center")
+        comp_param = params.itemByName("sidewaysCompensation")
+        if comp_param:
+            comp_map = {
+                "left": "'left (climb)'",
+                "right": "'right (conventional)'",
+                "center": "'center'",
+                "off": "'off'"
+            }
+            if compensation in comp_map:
+                comp_param.expression = comp_map[compensation]
+                changes.append(f"Compensation: {compensation}")
+        
+        # Tool diameter hint
+        tool_diameter = body.get("tool_diameter")
+        if tool_diameter:
+            diam_param = params.itemByName("tool_diameter")
+            if diam_param:
+                diam_param.expression = f"{tool_diameter} mm"
+                
+    except Exception as e:
+        changes.append(f"Parameter error: {str(e)}")
+    
+    # List ALL available parameters for debugging
+    all_params = []
+    try:
+        for i in range(params.count):
+            p = params.item(i)
+            all_params.append(p.name)
+    except:
+        pass
+    
+    return {
+        "operation_id": op.name,
+        "name": op.name,
+        "curves_selected": curves_selected,
+        "changes": changes,
+        "available_parameters": all_params,  # This helps us see what we can set!
+        "message": "Trace operation created. Select V-bit tool, verify curve selection, then generate."
     }
 
 
@@ -3531,6 +4023,117 @@ def handle_cam_create_contour_advanced(body):
         "name": op.name,
         "changes": changes,
         "message": "Contour operation created. Generate toolpath to continue."
+    }
+
+
+def handle_cam_create_miter_clearing(body):
+    """Create terraced clearing operations for 45-degree miter cuts.
+    
+    Creates multiple 2D contour operations at progressively deeper levels,
+    each offset inward to approximate the miter angle. This prepares for
+    a V-bit finish pass.
+    
+    For a 45° miter, at depth D, the tool is offset D mm from the edge.
+    """
+    cam = get_cam()
+    
+    setup_name = body.get("setup")
+    setup = None
+    
+    if setup_name:
+        for s in cam.setups:
+            if s.name == setup_name:
+                setup = s
+                break
+        if not setup:
+            raise Exception(f"Setup not found: {setup_name}")
+    else:
+        if cam.setups.count > 0:
+            setup = cam.setups.item(cam.setups.count - 1)
+    
+    if not setup:
+        raise Exception("No setup available. Create a setup first.")
+    
+    # Parameters
+    total_depth = body.get("depth", 18)  # Total miter depth in mm
+    num_steps = body.get("steps", 4)  # Number of terrace levels
+    tool_diameter = body.get("tool_diameter", 6)  # Flat endmill diameter
+    stock_for_finish = body.get("stock_for_finish", 1.0)  # Stock to leave for V-bit
+    miter_angle = body.get("miter_angle", 45)  # Miter angle in degrees
+    stepdown = body.get("stepdown", 4)  # Max stepdown per pass within each terrace
+    
+    import math
+    angle_rad = math.radians(miter_angle)
+    tan_angle = math.tan(angle_rad)  # For 45°, this is 1.0
+    
+    operations_created = []
+    step_depth = total_depth / num_steps
+    
+    for i in range(num_steps):
+        terrace_depth = step_depth * (i + 1)
+        # For 45° miter, horizontal offset equals depth
+        # We want to stay outside the final miter surface, plus stock for finish
+        horizontal_offset = terrace_depth * tan_angle + stock_for_finish
+        
+        # Create 2D contour operation
+        op_input = setup.operations.createInput('contour2d')
+        op = setup.operations.add(op_input)
+        
+        op_name = f"Miter Clear {i+1} - {terrace_depth:.1f}mm"
+        op.name = op_name
+        
+        try:
+            params = op.parameters
+            
+            # Set bottom height (depth)
+            bottom_offset = params.itemByName("bottomHeight_offset")
+            if bottom_offset:
+                bottom_offset.expression = f"-{terrace_depth} mm"
+            
+            # Set stock to leave (radial) - this offsets the tool from the edge
+            stock_param = params.itemByName("stockToLeave")
+            if stock_param:
+                stock_param.expression = f"{horizontal_offset} mm"
+            
+            # Set stock to leave on floor
+            floor_stock = params.itemByName("stockToLeaveFloor") 
+            if floor_stock:
+                floor_stock.expression = f"{stock_for_finish} mm"
+            
+            # Enable multiple depths within this terrace level
+            multiple_depths = params.itemByName("useMultipleDepths")
+            if multiple_depths:
+                multiple_depths.expression = "true"
+            
+            # Set stepdown
+            stepdown_param = params.itemByName("maximumStepdown")
+            if stepdown_param:
+                stepdown_param.expression = f"{stepdown} mm"
+            
+            # Use silhouette boundary (auto-detect edges)
+            boundary_param = params.itemByName("machiningBoundary")
+            if boundary_param:
+                boundary_param.expression = "'silhouette'"
+            
+            # Set tool diameter hint
+            diam_param = params.itemByName("tool_diameter")
+            if diam_param:
+                diam_param.expression = f"{tool_diameter} mm"
+                
+        except Exception as e:
+            pass  # Some parameters may not exist
+        
+        operations_created.append({
+            "name": op_name,
+            "depth": terrace_depth,
+            "offset": horizontal_offset
+        })
+    
+    return {
+        "success": True,
+        "operations": operations_created,
+        "summary": f"Created {num_steps} terraced clearing operations for {total_depth}mm deep {miter_angle}° miter",
+        "message": "Select a flat endmill tool for each operation, then generate toolpaths."
     }
 
 
@@ -5990,6 +6593,7 @@ ROUTES = {
     "/cam_create_2d_contour": handle_cam_create_2d_contour,
     "/cam_create_2d_pocket": handle_cam_create_2d_pocket,
     "/cam_create_engrave": handle_cam_create_engrave,
+    "/cam_create_trace": handle_cam_create_trace,
     "/cam_generate_all": handle_cam_generate_all,
     "/cam_post_process": handle_cam_post_process,
     "/cam_list_operations": handle_cam_list_operations,
@@ -5999,6 +6603,7 @@ ROUTES = {
     "/cam_derive_body": handle_cam_derive_body,
     "/cam_create_face": handle_cam_create_face,
     "/cam_create_contour_advanced": handle_cam_create_contour_advanced,
+    "/cam_create_miter_clearing": handle_cam_create_miter_clearing,
     "/cam_create_keepout": handle_cam_create_keepout,
     "/cam_set_model": handle_cam_set_model,
     "/cam_get_setup_params": handle_cam_get_setup_params,

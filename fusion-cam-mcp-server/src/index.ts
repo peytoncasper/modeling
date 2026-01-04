@@ -294,6 +294,43 @@ EXAMPLE for 90° V-bit contour:
     },
   },
   {
+    name: "fusion_cam_create_miter_clearing",
+    description: `Create terraced clearing operations for 45-degree miter cuts.
+
+Creates multiple 2D contour operations at progressively deeper levels,
+each offset inward to approximate the miter angle. This prepares the
+material for a V-bit finish pass that only needs to clean up ~1mm.
+
+For a 45° miter at 18mm depth, creates 4 terrace levels:
+- Terrace 1: 4.5mm deep, 5.5mm offset
+- Terrace 2: 9mm deep, 10mm offset  
+- Terrace 3: 13.5mm deep, 14.5mm offset
+- Terrace 4: 18mm deep, 19mm offset
+
+EXAMPLE:
+{
+  "setup": "Setup1",
+  "depth": 18,
+  "steps": 4,
+  "tool_diameter": 6,
+  "stock_for_finish": 1.0,
+  "stepdown": 4
+}`,
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        setup: { type: "string", description: "Setup name" },
+        depth: { type: "number", description: "Total miter depth in mm (default: 18)" },
+        steps: { type: "number", description: "Number of terrace levels (default: 4)" },
+        tool_diameter: { type: "number", description: "Flat endmill diameter in mm (default: 6)" },
+        stock_for_finish: { type: "number", description: "Stock to leave for V-bit finish in mm (default: 1.0)" },
+        miter_angle: { type: "number", description: "Miter angle in degrees (default: 45)" },
+        stepdown: { type: "number", description: "Max stepdown per pass within each terrace (default: 4mm)" },
+      },
+      required: [],
+    },
+  },
+  {
     name: "fusion_cam_create_engrave",
     description: "Create an engrave toolpath for text or detail work.",
     inputSchema: {
@@ -302,6 +339,41 @@ EXAMPLE for 90° V-bit contour:
         setup: { type: "string", description: "Setup name" },
         name: { type: "string", description: "Operation name" },
         depth: { type: "number", description: "Engrave depth in mm" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "fusion_cam_create_trace",
+    description: `Create a Trace toolpath - ideal for V-bit miter cuts.
+
+IMPORTANT: Fusion blocks multiple depths for V-bits, so create separate operations per depth.
+Use axialOffset (via depth parameter) to control cut depth for each pass.
+
+EXAMPLE for 45° miter with 90° V-bit at 4mm depth:
+{
+  "setup": "Setup1",
+  "name": "V-Miter 4mm",
+  "sketch_id": "Miter_Trace_Top",
+  "depth": 4,
+  "tool_type": "chamfer mill",
+  "tool_angle": 90,
+  "tool_diameter": 25.4
+}`,
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        setup: { type: "string", description: "Setup name" },
+        name: { type: "string", description: "Operation name" },
+        sketch_id: { type: "string", description: "Sketch containing trace curves" },
+        depth: { type: "number", description: "Cut depth in mm (sets axialOffset)" },
+        tool_type: { type: "string", description: "Tool type (default: 'chamfer mill' for V-bits)" },
+        tool_angle: { type: "number", description: "V-bit included angle in degrees (default: 90)" },
+        tool_diameter: { type: "number", description: "Tool diameter in mm" },
+        stepdown: { type: "number", description: "Stepdown per pass in mm (may not work with V-bits)" },
+        passes: { type: "number", description: "Number of passes (alternative to stepdown)" },
+        axial_offset: { type: "number", description: "Axial offset to shift cut depth (mm)" },
+        compensation: { type: "string", enum: ["left", "right", "center", "off"], description: "Sideways compensation (default: center)" },
       },
       required: [],
     },
@@ -391,7 +463,9 @@ const ENDPOINTS: Record<string, string> = {
   fusion_cam_create_2d_contour: "/cam_create_2d_contour",
   fusion_cam_create_contour_advanced: "/cam_create_contour_advanced",
   fusion_cam_create_2d_pocket: "/cam_create_2d_pocket",
+  fusion_cam_create_miter_clearing: "/cam_create_miter_clearing",
   fusion_cam_create_engrave: "/cam_create_engrave",
+  fusion_cam_create_trace: "/cam_create_trace",
   fusion_cam_select_silhouette: "/cam_select_silhouette",
   
   // Generation & Output
