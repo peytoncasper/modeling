@@ -261,3 +261,5 @@ pip install tabulate
 - Competition levels: Very Low (<100), Low (<500), Medium (<2000), High (2000+)
 - Opportunity scores range from 0-100 (higher is better)
 
+
+
