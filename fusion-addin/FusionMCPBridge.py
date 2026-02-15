@@ -605,6 +605,509 @@ def handle_finish_sketch(body):
     }
 
 
+def handle_analyze_sketch_gaps(body):
+    """Analyze a sketch to find gaps between curve endpoints that prevent closure.
+    
+    Returns all curve endpoints and identifies pairs that are close but not connected,
+    which prevents the sketch from forming closed profiles.
+    """
+    import math
+    
+    sketch = get_sketch(body["sketch_id"])
+    tolerance = body.get("tolerance", 0.01)  # mm, default 0.01mm
+    
+    # Collect all curve endpoints
+    endpoints = []
+    curves_info = []
+    
+    for i, curve in enumerate(sketch.sketchCurves):
+        curve_type = type(curve).__name__
+        curve_data = {
+            "index": i,
+            "type": curve_type,
+            "is_construction": curve.isConstruction if hasattr(curve, 'isConstruction') else False
+        }
+        
+        # Skip construction geometry
+        if curve_data["is_construction"]:
+            curves_info.append(curve_data)
+            continue
+        
+        # Get endpoints based on curve type
+        if hasattr(curve, 'startSketchPoint') and hasattr(curve, 'endSketchPoint'):
+            # Lines, arcs, splines have start/end points
+            start_pt = curve.startSketchPoint.geometry
+            end_pt = curve.endSketchPoint.geometry
+            
+            start_coords = [start_pt.x * 10, start_pt.y * 10]  # cm to mm
+            end_coords = [end_pt.x * 10, end_pt.y * 10]
+            
+            curve_data["start"] = start_coords
+            curve_data["end"] = end_coords
+            
+            endpoints.append({
+                "curve_index": i,
+                "point_type": "start",
+                "coords": start_coords,
+                "sketch_point": curve.startSketchPoint
+            })
+            endpoints.append({
+                "curve_index": i,
+                "point_type": "end",
+                "coords": end_coords,
+                "sketch_point": curve.endSketchPoint
+            })
+            
+        elif hasattr(curve, 'centerSketchPoint'):
+            # Circles are inherently closed
+            center = curve.centerSketchPoint.geometry
+            curve_data["center"] = [center.x * 10, center.y * 10]
+            curve_data["is_closed"] = True
+        
+        curves_info.append(curve_data)
+    
+    # Find gaps - endpoints that are close but not coincident
+    gaps = []
+    connected_pairs = set()
+    
+    for i, ep1 in enumerate(endpoints):
+        for j, ep2 in enumerate(endpoints):
+            if i >= j:
+                continue
+            
+            # Skip if same curve
+            if ep1["curve_index"] == ep2["curve_index"]:
+                continue
+            
+            # Calculate distance
+            dx = ep1["coords"][0] - ep2["coords"][0]
+            dy = ep1["coords"][1] - ep2["coords"][1]
+            dist = math.sqrt(dx*dx + dy*dy)
+            
+            # Check if points share the same sketch point (properly connected)
+            same_point = ep1["sketch_point"] == ep2["sketch_point"]
+            
+            if same_point:
+                connected_pairs.add((ep1["curve_index"], ep2["curve_index"]))
+            elif dist < tolerance * 10:  # Within 10x tolerance = gap
+                gaps.append({
+                    "curve1_index": ep1["curve_index"],
+                    "curve1_point": ep1["point_type"],
+                    "curve2_index": ep2["curve_index"],
+                    "curve2_point": ep2["point_type"],
+                    "distance_mm": round(dist, 6),
+                    "point1": ep1["coords"],
+                    "point2": ep2["coords"],
+                    "can_auto_close": dist <= tolerance
+                })
+    
+    # Find dangling endpoints (not connected to anything)
+    connected_endpoints = set()
+    for c1, c2 in connected_pairs:
+        connected_endpoints.add(c1)
+        connected_endpoints.add(c2)
+    
+    dangling = []
+    curve_connection_count = {}
+    for ep in endpoints:
+        idx = ep["curve_index"]
+        if idx not in curve_connection_count:
+            curve_connection_count[idx] = {"start": False, "end": False}
+    
+    for c1, c2 in connected_pairs:
+        # Mark curves as having connections
+        curve_connection_count.setdefault(c1, {"start": False, "end": False})
+        curve_connection_count.setdefault(c2, {"start": False, "end": False})
+    
+    for ep in endpoints:
+        idx = ep["curve_index"]
+        pt_type = ep["point_type"]
+        
+        # Check if this endpoint is connected to another curve
+        is_connected = False
+        for c1, c2 in connected_pairs:
+            if idx == c1 or idx == c2:
+                is_connected = True
+                break
+        
+        # Also check gaps that could be closed
+        for gap in gaps:
+            if gap["curve1_index"] == idx or gap["curve2_index"] == idx:
+                is_connected = True  # Has a potential connection
+                break
+        
+        if not is_connected:
+            dangling.append({
+                "curve_index": idx,
+                "point_type": pt_type,
+                "coords": ep["coords"]
+            })
+    
+    # Sort gaps by distance
+    gaps.sort(key=lambda g: g["distance_mm"])
+    
+    return {
+        "sketch_id": body["sketch_id"],
+        "profile_count": sketch.profiles.count,
+        "curve_count": sketch.sketchCurves.count,
+        "tolerance_mm": tolerance,
+        "curves": curves_info,
+        "gaps": gaps,
+        "dangling_endpoints": dangling,
+        "connected_curve_pairs": [[c1, c2] for c1, c2 in connected_pairs],
+        "summary": {
+            "total_gaps": len(gaps),
+            "auto_closeable_gaps": len([g for g in gaps if g["can_auto_close"]]),
+            "dangling_count": len(dangling),
+            "needs_fixing": len(gaps) > 0 or len(dangling) > 0
+        }
+    }
+
+
+def handle_close_sketch_gaps(body):
+    """Close gaps in a sketch by merging close endpoints or adding connecting lines.
+    
+    Args:
+        sketch_id: Target sketch
+        tolerance: Max distance (mm) to auto-merge points (default 0.01)
+        max_line_gap: Max distance (mm) to bridge with a line (default 1.0)
+        dry_run: If True, only report what would be done (default False)
+    """
+    import math
+    
+    sketch = get_sketch(body["sketch_id"])
+    tolerance = body.get("tolerance", 0.01)  # mm
+    max_line_gap = body.get("max_line_gap", 1.0)  # mm
+    dry_run = body.get("dry_run", False)
+    
+    # First analyze the gaps
+    analysis = handle_analyze_sketch_gaps({"sketch_id": body["sketch_id"], "tolerance": tolerance})
+    
+    actions = []
+    merged_count = 0
+    lines_added = 0
+    
+    # Collect endpoints with their sketch points
+    endpoint_map = {}
+    for i, curve in enumerate(sketch.sketchCurves):
+        if hasattr(curve, 'isConstruction') and curve.isConstruction:
+            continue
+        if hasattr(curve, 'startSketchPoint') and hasattr(curve, 'endSketchPoint'):
+            endpoint_map[(i, "start")] = curve.startSketchPoint
+            endpoint_map[(i, "end")] = curve.endSketchPoint
+    
+    # Process gaps from smallest to largest
+    processed_points = set()
+    
+    for gap in analysis["gaps"]:
+        c1_idx = gap["curve1_index"]
+        c1_pt = gap["curve1_point"]
+        c2_idx = gap["curve2_index"]
+        c2_pt = gap["curve2_point"]
+        dist = gap["distance_mm"]
+        
+        key1 = (c1_idx, c1_pt)
+        key2 = (c2_idx, c2_pt)
+        
+        # Skip if already processed
+        if key1 in processed_points or key2 in processed_points:
+            continue
+        
+        if key1 not in endpoint_map or key2 not in endpoint_map:
+            continue
+        
+        sp1 = endpoint_map[key1]
+        sp2 = endpoint_map[key2]
+        
+        if dist <= tolerance:
+            # Merge points - move sp2 to sp1's location
+            action = {
+                "type": "merge",
+                "from_curve": c2_idx,
+                "from_point": c2_pt,
+                "to_curve": c1_idx,
+                "to_point": c1_pt,
+                "distance_mm": dist
+            }
+            
+            if not dry_run:
+                try:
+                    # Move the second point to match the first
+                    sp2.move(adsk.core.Vector3D.create(
+                        sp1.geometry.x - sp2.geometry.x,
+                        sp1.geometry.y - sp2.geometry.y,
+                        0
+                    ))
+                    merged_count += 1
+                    action["success"] = True
+                except Exception as e:
+                    action["success"] = False
+                    action["error"] = str(e)
+            
+            actions.append(action)
+            processed_points.add(key1)
+            processed_points.add(key2)
+            
+        elif dist <= max_line_gap:
+            # Add a line to bridge the gap
+            action = {
+                "type": "bridge_line",
+                "from_curve": c1_idx,
+                "from_point": c1_pt,
+                "to_curve": c2_idx,
+                "to_point": c2_pt,
+                "distance_mm": dist
+            }
+            
+            if not dry_run:
+                try:
+                    lines = sketch.sketchCurves.sketchLines
+                    # Use the actual sketch point geometries
+                    line = lines.addByTwoPoints(sp1.geometry, sp2.geometry)
+                    lines_added += 1
+                    action["success"] = True
+                except Exception as e:
+                    action["success"] = False
+                    action["error"] = str(e)
+            
+            actions.append(action)
+            processed_points.add(key1)
+            processed_points.add(key2)
+    
+    # Recount profiles after changes
+    adsk.doEvents()
+    new_profile_count = sketch.profiles.count
+    
+    return {
+        "sketch_id": body["sketch_id"],
+        "dry_run": dry_run,
+        "original_profile_count": analysis["profile_count"],
+        "new_profile_count": new_profile_count,
+        "actions": actions,
+        "summary": {
+            "points_merged": merged_count,
+            "lines_added": lines_added,
+            "total_actions": len(actions),
+            "profiles_created": new_profile_count - analysis["profile_count"]
+        }
+    }
+
+
+def handle_recreate_sketch_as_polygon(body):
+    """Recreate a sketch as a proper closed polygon.
+    
+    Takes the vertices from an existing sketch, optionally deletes the old sketch,
+    and creates a new sketch with a properly connected closed polygon.
+    
+    Args:
+        sketch_id: Source sketch to get vertices from
+        new_sketch_name: Name for the new sketch (default: original + "_fixed")
+        vertices: Optional list of [x,y] vertices in order (if not provided, extracts from sketch)
+        delete_original: Whether to delete the original sketch (default: False)
+    """
+    sketch_id = body.get("sketch_id")
+    new_name = body.get("new_sketch_name", f"{sketch_id}_fixed")
+    vertices = body.get("vertices")
+    delete_original = body.get("delete_original", False)
+    
+    # Get original sketch info
+    orig_sketch = get_sketch(sketch_id)
+    
+    # Get plane info from original sketch
+    sketch_plane = orig_sketch.referencePlane
+    
+    # If no vertices provided, extract from sketch
+    if not vertices:
+        # Collect unique vertices and trace outer boundary
+        import math
+        
+        vert_set = set()
+        edges = []
+        
+        for curve in orig_sketch.sketchCurves:
+            if hasattr(curve, 'isConstruction') and curve.isConstruction:
+                continue
+            if hasattr(curve, 'startSketchPoint') and hasattr(curve, 'endSketchPoint'):
+                start = curve.startSketchPoint.geometry
+                end = curve.endSketchPoint.geometry
+                s = (round(start.x * 10, 4), round(start.y * 10, 4))  # cm to mm
+                e = (round(end.x * 10, 4), round(end.y * 10, 4))
+                vert_set.add(s)
+                vert_set.add(e)
+                edges.append((s, e))
+        
+        # Build adjacency and find vertices with degree 2 (outer boundary vertices)
+        adj = {}
+        for s, e in edges:
+            adj.setdefault(s, []).append(e)
+            adj.setdefault(e, []).append(s)
+        
+        # For simple polygons, all vertices have degree 2
+        # For complex shapes, trace the outer boundary
+        # Simple approach: sort vertices by angle from centroid
+        verts = list(vert_set)
+        cx = sum(v[0] for v in verts) / len(verts)
+        cy = sum(v[1] for v in verts) / len(verts)
+        
+        def angle_from_center(v):
+            return math.atan2(v[1] - cy, v[0] - cx)
+        
+        vertices = sorted(verts, key=angle_from_center)
+        vertices = [[v[0], v[1]] for v in vertices]
+    
+    root = get_root()
+    sketches = root.sketches
+    
+    # Create new sketch on same plane
+    new_sketch = sketches.add(sketch_plane)
+    new_sketch.name = new_name
+    
+    # Draw closed polygon
+    lines = new_sketch.sketchCurves.sketchLines
+    
+    drawn_lines = []
+    for i in range(len(vertices)):
+        start = vertices[i]
+        end = vertices[(i + 1) % len(vertices)]  # Wrap to first vertex
+        
+        start_pt = adsk.core.Point3D.create(start[0] / 10.0, start[1] / 10.0, 0)  # mm to cm
+        end_pt = adsk.core.Point3D.create(end[0] / 10.0, end[1] / 10.0, 0)
+        
+        line = lines.addByTwoPoints(start_pt, end_pt)
+        drawn_lines.append(f"[{start[0]:.2f},{start[1]:.2f}] -> [{end[0]:.2f},{end[1]:.2f}]")
+    
+    adsk.doEvents()
+    
+    # Check if profile was created
+    profile_count = new_sketch.profiles.count
+    
+    # Delete original if requested
+    if delete_original:
+        try:
+            orig_sketch.deleteMe()
+        except:
+            pass
+    
+    return {
+        "success": True,
+        "original_sketch": sketch_id,
+        "new_sketch": new_name,
+        "vertices_used": len(vertices),
+        "lines_drawn": len(drawn_lines),
+        "profile_count": profile_count,
+        "is_closed": profile_count > 0,
+        "vertices": vertices
+    }
+
+
+def handle_apply_coincident_constraints(body):
+    """Apply coincident constraints between close endpoints to properly close a sketch.
+    
+    This is the correct way to close sketches in Fusion - using geometric constraints
+    rather than just moving points.
+    
+    Args:
+        sketch_id: Target sketch
+        tolerance: Max distance (mm) to apply constraint (default 0.1)
+    """
+    import math
+    
+    sketch = get_sketch(body["sketch_id"])
+    tolerance = body.get("tolerance", 0.1)  # mm
+    tolerance_cm = tolerance / 10.0  # Convert to cm for Fusion
+    
+    constraints = sketch.geometricConstraints
+    
+    # Collect all endpoints with their sketch points
+    endpoints = []
+    for i, curve in enumerate(sketch.sketchCurves):
+        if hasattr(curve, 'isConstruction') and curve.isConstruction:
+            continue
+        if hasattr(curve, 'startSketchPoint') and hasattr(curve, 'endSketchPoint'):
+            endpoints.append({
+                "curve_index": i,
+                "point_type": "start",
+                "sketch_point": curve.startSketchPoint,
+                "coords": [curve.startSketchPoint.geometry.x, curve.startSketchPoint.geometry.y]
+            })
+            endpoints.append({
+                "curve_index": i,
+                "point_type": "end", 
+                "sketch_point": curve.endSketchPoint,
+                "coords": [curve.endSketchPoint.geometry.x, curve.endSketchPoint.geometry.y]
+            })
+    
+    # Find pairs that are close but not the same sketch point
+    constraints_added = []
+    processed = set()
+    
+    for i, ep1 in enumerate(endpoints):
+        for j, ep2 in enumerate(endpoints):
+            if i >= j:
+                continue
+            
+            # Skip same curve
+            if ep1["curve_index"] == ep2["curve_index"]:
+                continue
+            
+            # Skip if already the same sketch point
+            if ep1["sketch_point"] == ep2["sketch_point"]:
+                continue
+            
+            # Check distance
+            dx = ep1["coords"][0] - ep2["coords"][0]
+            dy = ep1["coords"][1] - ep2["coords"][1]
+            dist_cm = math.sqrt(dx*dx + dy*dy)
+            dist_mm = dist_cm * 10
+            
+            if dist_mm > tolerance:
+                continue
+            
+            # Create a unique key for this pair
+            key = tuple(sorted([(ep1["curve_index"], ep1["point_type"]), 
+                                (ep2["curve_index"], ep2["point_type"])]))
+            if key in processed:
+                continue
+            processed.add(key)
+            
+            # Apply coincident constraint
+            try:
+                constraints.addCoincident(ep1["sketch_point"], ep2["sketch_point"])
+                constraints_added.append({
+                    "curve1": ep1["curve_index"],
+                    "point1": ep1["point_type"],
+                    "curve2": ep2["curve_index"],
+                    "point2": ep2["point_type"],
+                    "distance_mm": round(dist_mm, 6),
+                    "success": True
+                })
+            except Exception as e:
+                constraints_added.append({
+                    "curve1": ep1["curve_index"],
+                    "point1": ep1["point_type"],
+                    "curve2": ep2["curve_index"],
+                    "point2": ep2["point_type"],
+                    "distance_mm": round(dist_mm, 6),
+                    "success": False,
+                    "error": str(e)
+                })
+    
+    # Let Fusion update
+    adsk.doEvents()
+    
+    return {
+        "sketch_id": body["sketch_id"],
+        "original_profile_count": sketch.profiles.count,  # May have changed
+        "constraints_added": constraints_added,
+        "new_profile_count": sketch.profiles.count,
+        "summary": {
+            "total_constraints": len(constraints_added),
+            "successful": len([c for c in constraints_added if c["success"]]),
+            "failed": len([c for c in constraints_added if not c["success"]])
+        }
+    }
+
+
 def handle_get_sketch_profiles(body):
     sketch = get_sketch(body["sketch_id"])
     
@@ -1262,6 +1765,415 @@ def handle_boolean(body):
         if target_in_subcomponent and operation == "union":
             error_msg += " (Cross-component unions may require bodies to be in same component. Try creating geometry directly in target component.)"
         raise Exception(error_msg)
+
+
+# ============================================================================
+# SHELL & SPLIT BODY
+# ============================================================================
+
+def handle_shell(body):
+    """Shell a body to create a thin-walled version.
+    
+    Creates uniform-thickness walls by removing selected faces and hollowing
+    the interior. If no faces are specified, creates a fully enclosed shell.
+    
+    ESSENTIAL for converting solid polyhedra into panel assemblies with
+    natural miter joints at every edge.
+    
+    Args:
+        body_id: Name of the body to shell
+        thickness: Wall thickness in mm (required)
+        remove_faces: List of face IDs to remove (open the shell). 
+                      If empty/omitted, creates a fully enclosed shell.
+        direction: "inside" (default), "outside", or "both" - which direction to thicken
+    """
+    import math
+    try:
+        root = get_root()
+        design = get_design()
+        
+        body_name = body.get("body_id")
+        thickness = body.get("thickness")
+        remove_face_ids = body.get("remove_faces", [])
+        direction = body.get("direction", "inside")
+        
+        if not body_name:
+            raise Exception("body_id is required")
+        if thickness is None or thickness <= 0:
+            raise Exception("thickness must be a positive number (in mm)")
+        
+        # Find the body
+        target_body = find_body_by_name(root, body_name)
+        if not target_body:
+            raise Exception(f"Body not found: {body_name}")
+        
+        # Create shell feature
+        shell_feats = root.features.shellFeatures
+        
+        # Build the face collection for faces to remove
+        faces_to_remove = adsk.core.ObjectCollection.create()
+        
+        def resolve_face(face_id, target_body):
+            """Resolve a face ID to a BRepFace object."""
+            face = None
+            # Strip body name prefix if present (e.g., "Wedge_Face1_face_0" -> "face_0")
+            clean_id = face_id
+            for prefix in [target_body.name + "_", ""]:
+                if face_id.startswith(prefix) and prefix:
+                    clean_id = face_id[len(prefix):]
+                    break
+            
+            # Try as pure integer index
+            try:
+                idx = int(face_id)
+                if 0 <= idx < target_body.faces.count:
+                    return target_body.faces.item(idx)
+            except (ValueError, TypeError):
+                pass
+            
+            # Try as "face_N" format
+            if clean_id.startswith("face_"):
+                try:
+                    idx = int(clean_id.split("_")[1])
+                    if 0 <= idx < target_body.faces.count:
+                        return target_body.faces.item(idx)
+                except (ValueError, TypeError, IndexError):
+                    pass
+            
+            return None
+        
+        if remove_face_ids:
+            for face_id in remove_face_ids:
+                face = resolve_face(face_id, target_body)
+                if face:
+                    faces_to_remove.add(face)
+                else:
+                    raise Exception(f"Face not found: {face_id} (body has {target_body.faces.count} faces, use index 0-{target_body.faces.count - 1})")
+        
+        # Convert mm to cm for Fusion API
+        thickness_cm = thickness / 10.0
+        
+        shell_input = shell_feats.createInput(faces_to_remove)
+        
+        # Set direction
+        if direction == "inside":
+            shell_input.insideThickness = adsk.core.ValueInput.createByReal(thickness_cm)
+        elif direction == "outside":
+            shell_input.outsideThickness = adsk.core.ValueInput.createByReal(thickness_cm)
+        elif direction == "both":
+            shell_input.insideThickness = adsk.core.ValueInput.createByReal(thickness_cm / 2.0)
+            shell_input.outsideThickness = adsk.core.ValueInput.createByReal(thickness_cm / 2.0)
+        else:
+            shell_input.insideThickness = adsk.core.ValueInput.createByReal(thickness_cm)
+        
+        shell_feat = shell_feats.add(shell_input)
+        adsk.doEvents()
+        
+        return {
+            "success": True,
+            "body_id": body_name,
+            "thickness_mm": thickness,
+            "direction": direction,
+            "faces_removed": len(remove_face_ids),
+            "feature_name": shell_feat.name if shell_feat else "Shell"
+        }
+    except Exception as e:
+        return {"error": True, "message": str(e), "traceback": traceback.format_exc()}
+
+
+def handle_create_patch(body):
+    """Create a zero-thickness surface (patch) from a sketch profile.
+    
+    Essential for building polyhedron solids: create patches for each face,
+    then stitch them together into a closed solid.
+    
+    Args:
+        sketch_id: Sketch containing the profile
+        profile_index: Which profile to patch (default: 0)
+        component: Optional component name
+        body_name: Optional name for the resulting surface body
+    """
+    try:
+        design = get_design()
+        root = get_root()
+        
+        sketch_id = body.get("sketch_id")
+        profile_index = body.get("profile_index", 0)
+        component_name = body.get("component")
+        new_body_name = body.get("body_name")
+        
+        if not sketch_id:
+            raise Exception("sketch_id is required")
+        
+        # Get sketch
+        sketch, sketch_component = get_sketch_with_component(sketch_id, component_name)
+        
+        if profile_index >= sketch.profiles.count:
+            raise Exception(f"Profile index {profile_index} out of range (sketch has {sketch.profiles.count} profiles)")
+        
+        profile = sketch.profiles.item(profile_index)
+        if not profile:
+            raise Exception(f"Profile not found at index {profile_index}")
+        
+        # Create the patch feature
+        patches = sketch_component.features.patchFeatures
+        patch_input = patches.createInput(
+            profile,
+            adsk.fusion.FeatureOperations.NewBodyFeatureOperation
+        )
+        
+        patch_feat = patches.add(patch_input)
+        adsk.doEvents()
+        
+        # Get the resulting body
+        result_body = None
+        if patch_feat.bodies.count > 0:
+            result_body = patch_feat.bodies.item(0)
+            if new_body_name and result_body:
+                result_body.name = new_body_name
+        
+        body_name = result_body.name if result_body else "unknown"
+        is_solid = result_body.isSolid if result_body else False
+        area = result_body.area * 100 if result_body else 0  # cm² to mm²
+        
+        return {
+            "success": True,
+            "body_id": body_name,
+            "is_solid": is_solid,
+            "is_surface": not is_solid,
+            "area_mm2": area,
+            "feature_name": patch_feat.name,
+            "source_sketch": sketch_id,
+            "profile_index": profile_index
+        }
+    except Exception as e:
+        return {"error": True, "message": str(e), "traceback": traceback.format_exc()}
+
+
+def handle_stitch(body):
+    """Stitch multiple surface bodies together into one body.
+    
+    When the stitched surfaces form a CLOSED (watertight) boundary,
+    Fusion automatically converts the result into a SOLID body.
+    This is the key to creating solid polyhedra from face patches.
+    
+    Args:
+        body_ids: List of body names to stitch together
+        tolerance: Stitch tolerance in mm (default: 0.1)
+        body_name: Optional name for the resulting body
+    """
+    try:
+        design = get_design()
+        root = get_root()
+        
+        body_ids = body.get("body_ids", [])
+        tolerance_mm = body.get("tolerance", 0.1)
+        new_body_name = body.get("body_name")
+        
+        if not body_ids or len(body_ids) < 2:
+            raise Exception("body_ids must contain at least 2 body names to stitch")
+        
+        # Collect all bodies
+        bodies_collection = adsk.core.ObjectCollection.create()
+        found_bodies = []
+        
+        for bid in body_ids:
+            b = find_body_by_name(root, bid)
+            if not b:
+                raise Exception(f"Body not found: {bid}")
+            bodies_collection.add(b)
+            found_bodies.append(bid)
+        
+        # Convert mm tolerance to cm (Fusion internal unit)
+        tolerance_cm = tolerance_mm / 10.0
+        
+        # Create stitch feature
+        stitch_feats = root.features.stitchFeatures
+        stitch_input = stitch_feats.createInput(
+            bodies_collection,
+            adsk.core.ValueInput.createByReal(tolerance_cm)
+        )
+        
+        stitch_feat = stitch_feats.add(stitch_input)
+        adsk.doEvents()
+        
+        # Get the resulting body
+        result_body = None
+        if stitch_feat.bodies.count > 0:
+            result_body = stitch_feat.bodies.item(0)
+            if new_body_name and result_body:
+                result_body.name = new_body_name
+        
+        body_name = result_body.name if result_body else "unknown"
+        is_solid = result_body.isSolid if result_body else False
+        volume = result_body.volume * 1000 if (result_body and is_solid) else 0  # cm³ to mm³
+        area = result_body.area * 100 if result_body else 0  # cm² to mm²
+        
+        return {
+            "success": True,
+            "body_id": body_name,
+            "is_solid": is_solid,
+            "is_surface": not is_solid,
+            "watertight": is_solid,
+            "volume_mm3": volume,
+            "area_mm2": area,
+            "bodies_stitched": found_bodies,
+            "body_count_stitched": len(found_bodies),
+            "tolerance_mm": tolerance_mm,
+            "feature_name": stitch_feat.name
+        }
+    except Exception as e:
+        return {"error": True, "message": str(e), "traceback": traceback.format_exc()}
+
+
+def handle_split_body(body):
+    """Split a body using a plane or another body as the splitting tool.
+    
+    Returns two (or more) separate bodies from the split.
+    Essential for creating miter cuts by splitting panels at bisector planes.
+    
+    Args:
+        body_id: Name of the body to split
+        splitting_tool: Name of splitting plane (xy, xz, yz, or custom plane name) 
+                       OR name of a body to use as the splitting tool
+        keep: "both" (default), "positive", or "negative" - which side(s) to keep
+    """
+    try:
+        root = get_root()
+        design = get_design()
+        
+        body_name = body.get("body_id")
+        tool_name = body.get("splitting_tool")
+        keep = body.get("keep", "both")
+        
+        if not body_name:
+            raise Exception("body_id is required")
+        if not tool_name:
+            raise Exception("splitting_tool is required (plane name or body name)")
+        
+        # Find the target body
+        target_body = find_body_by_name(root, body_name)
+        if not target_body:
+            raise Exception(f"Body not found: {body_name}")
+        
+        # Try to find the splitting tool - first as a plane, then as a body
+        split_entity = None
+        tool_type = None
+        
+        # Check construction planes
+        if tool_name in ("xy", "xz", "yz"):
+            if tool_name == "xy":
+                split_entity = root.xYConstructionPlane
+            elif tool_name == "xz":
+                split_entity = root.xZConstructionPlane
+            elif tool_name == "yz":
+                split_entity = root.yZConstructionPlane
+            tool_type = "plane"
+        else:
+            # Try as custom plane name
+            for plane in root.constructionPlanes:
+                if plane.name == tool_name:
+                    split_entity = plane
+                    tool_type = "plane"
+                    break
+            
+            # Try as body name
+            if not split_entity:
+                split_entity = find_body_by_name(root, tool_name)
+                if split_entity:
+                    tool_type = "body"
+        
+        if not split_entity:
+            raise Exception(f"Splitting tool not found: {tool_name} (not a known plane or body)")
+        
+        # Create split body feature
+        split_feats = root.features.splitBodyFeatures
+        split_input = split_feats.createInput(
+            target_body,
+            split_entity,
+            True  # splitToolExtent - extend the tool to fully split
+        )
+        
+        split_feat = split_feats.add(split_input)
+        adsk.doEvents()
+        
+        # Collect resulting bodies
+        result_bodies = []
+        for i in range(split_feat.bodies.count):
+            b = split_feat.bodies.item(i)
+            result_bodies.append({
+                "name": b.name,
+                "volume_mm3": round(b.volume * 1000, 3) if b.isSolid else None,
+                "center": [round(c * 10, 4) for c in b.boundingBox.minPoint.asArray()[:3]]  # approx
+            })
+        
+        # Implement 'keep' parameter - remove unwanted bodies
+        removed_bodies = []
+        if keep in ("positive", "negative") and tool_type == "plane" and len(result_bodies) >= 2:
+            # Determine which side each body is on relative to the splitting plane
+            # Get the plane's origin and normal
+            plane_origin = None
+            plane_normal = None
+            
+            if hasattr(split_entity, 'geometry'):
+                plane_geom = split_entity.geometry
+                plane_origin = plane_geom.origin.asArray()
+                plane_normal = plane_geom.normal.asArray()
+            
+            if plane_origin and plane_normal:
+                bodies_with_side = []
+                for i in range(split_feat.bodies.count):
+                    b = split_feat.bodies.item(i)
+                    # Get body center via bounding box
+                    bb_min = b.boundingBox.minPoint.asArray()
+                    bb_max = b.boundingBox.maxPoint.asArray()
+                    center = [(bb_min[j] + bb_max[j]) / 2.0 for j in range(3)]
+                    
+                    # Dot product of (center - origin) with normal to determine side
+                    vec = [center[j] - plane_origin[j] for j in range(3)]
+                    dot = sum(vec[j] * plane_normal[j] for j in range(3))
+                    side = "positive" if dot >= 0 else "negative"
+                    bodies_with_side.append((b, side, b.name))
+                
+                # Remove bodies on the unwanted side
+                remove_side = "negative" if keep == "positive" else "positive"
+                remove_feats = root.features.removeFeatures
+                for b, side, bname in bodies_with_side:
+                    if side == remove_side:
+                        try:
+                            remove_feats.add(b)
+                            removed_bodies.append(bname)
+                        except Exception as re:
+                            removed_bodies.append(f"{bname} (remove failed: {str(re)})")
+                
+                adsk.doEvents()
+        
+        # Re-collect remaining bodies after removal
+        final_bodies = []
+        for i in range(split_feat.bodies.count):
+            try:
+                b = split_feat.bodies.item(i)
+                if b and b.isSolid:
+                    final_bodies.append({
+                        "name": b.name,
+                        "volume_mm3": round(b.volume * 1000, 3)
+                    })
+            except:
+                pass
+        
+        return {
+            "success": True,
+            "original_body": body_name,
+            "splitting_tool": tool_name,
+            "tool_type": tool_type,
+            "keep": keep,
+            "result_bodies": final_bodies if final_bodies else result_bodies,
+            "removed_bodies": removed_bodies,
+            "body_count": len(final_bodies) if final_bodies else len(result_bodies),
+            "feature_name": split_feat.name
+        }
+    except Exception as e:
+        return {"error": True, "message": str(e), "traceback": traceback.format_exc()}
 
 
 # ============================================================================
@@ -2223,30 +3135,82 @@ def handle_set_view(body):
 
 
 def handle_undo(body):
+    """True undo: delete the last unsuppressed feature from the timeline.
+    This permanently removes the feature and all its effects on the model."""
     global app
     design = get_design()
+    timeline = design.timeline
     
-    # Use the fusion undo manager via the design
-    if design.timeline.count > 0:
-        # Suppress the last feature as a workaround
-        last_item = design.timeline.item(design.timeline.count - 1)
-        last_name = last_item.name if hasattr(last_item, 'name') else "unknown"
-        last_item.isSuppressed = True
-        return {"success": True, "undone_feature": last_name}
-    return {"success": False, "message": "Nothing to undo"}
+    if timeline.count == 0:
+        return {"success": False, "message": "Timeline is empty, nothing to undo"}
+    
+    # Find the last unsuppressed feature (skip already-suppressed ones)
+    target_item = None
+    target_index = -1
+    for i in range(timeline.count - 1, -1, -1):
+        item = timeline.item(i)
+        if not item.isSuppressed:
+            target_item = item
+            target_index = i
+            break
+    
+    if not target_item:
+        return {"success": False, "message": "No unsuppressed features to undo"}
+    
+    feature_name = target_item.name if hasattr(target_item, 'name') else "unknown"
+    entity = target_item.entity if hasattr(target_item, 'entity') else None
+    feature_type = entity.objectType.split('::')[-1] if entity else "unknown"
+    count_before = timeline.count
+    
+    # Actually delete the feature by calling deleteMe() on the ENTITY, not the timeline object
+    try:
+        if entity and hasattr(entity, 'deleteMe'):
+            entity.deleteMe()
+        else:
+            # Fallback: try timeline object directly (some items support it)
+            target_item.deleteMe()
+        adsk.doEvents()
+    except Exception as e:
+        return {
+            "success": False, 
+            "message": f"Failed to delete feature '{feature_name}': {str(e)}",
+            "fallback": "Feature may have dependencies. Try deleting dependent features first."
+        }
+    
+    count_after = timeline.count
+    
+    return {
+        "success": True,
+        "undone_feature": feature_name,
+        "feature_type": feature_type,
+        "timeline_index": target_index,
+        "timeline_count_before": count_before,
+        "timeline_count_after": count_after,
+        "features_removed": count_before - count_after
+    }
 
 
 def handle_redo(body):
+    """Redo is not supported with timeline deletion approach.
+    Use this to unsuppress the last suppressed feature instead."""
     global app
     design = get_design()
+    timeline = design.timeline
     
-    # Find first suppressed item and unsuppress it
-    for i in range(design.timeline.count):
-        item = design.timeline.item(i)
+    # Find the last suppressed feature and unsuppress it
+    for i in range(timeline.count - 1, -1, -1):
+        item = timeline.item(i)
         if item.isSuppressed:
+            item_name = item.name if hasattr(item, 'name') else "unknown"
             item.isSuppressed = False
-            return {"success": True}
-    return {"success": False, "message": "Nothing to redo"}
+            adsk.doEvents()
+            return {
+                "success": True,
+                "restored_feature": item_name,
+                "timeline_index": i
+            }
+    
+    return {"success": False, "message": "No suppressed features to redo"}
 
 
 def handle_get_timeline(body):
@@ -6474,6 +7438,508 @@ def handle_create_interface_frame(body):
         return {"error": True, "message": str(e)}
 
 
+# ============================================================================
+# POLYHEDRON / FACETED GEOMETRY TOOLS
+# ============================================================================
+
+def handle_create_angled_plane(body):
+    """Create a construction plane at ANY arbitrary orientation.
+    
+    Works in both parametric and direct design modes. Accepts either:
+      - point [x,y,z] + normal [x,y,z]   (computes 3 coplanar points automatically)
+      - three_points [[x,y,z],[x,y,z],[x,y,z]]  (uses them directly)
+    
+    Strategy: tries setByPlane first (direct mode). If that fails (parametric mode),
+    automatically searches for existing sketch points near the targets, and for any
+    missing ones creates minimal helper geometry (offset planes + sketch points),
+    then uses setByThreePoints which works in parametric mode.
+    
+    Args:
+        point: [x, y, z] point on the plane in mm
+        normal: [x, y, z] normal vector of the plane
+        three_points: [[x,y,z],[x,y,z],[x,y,z]] three points defining the plane in mm
+        name: Optional name for the plane
+        tolerance: Search radius in mm for matching existing sketch points (default 1.0)
+    """
+    import math
+    try:
+        root = get_root()
+        planes = root.constructionPlanes
+        name = body.get("name")
+        tolerance_mm = body.get("tolerance", 1.0)
+        
+        three_points_input = body.get("three_points")
+        point_coords = body.get("point")
+        normal_coords = body.get("normal")
+        
+        # --- Step 1: Determine three coplanar world points (in mm) ---
+        if three_points_input and len(three_points_input) >= 3:
+            pts_mm = [list(p) for p in three_points_input[:3]]
+        elif point_coords and normal_coords:
+            # Compute two perpendicular vectors lying in the plane
+            n = list(normal_coords)
+            mag_n = math.sqrt(sum(x*x for x in n))
+            n = [x / mag_n for x in n]
+            # Pick a reference vector not parallel to normal
+            ref = [0, 1, 0] if abs(n[1]) < 0.9 else [1, 0, 0]
+            # u = ref x n  (lies in the plane)
+            u = [
+                ref[1]*n[2] - ref[2]*n[1],
+                ref[2]*n[0] - ref[0]*n[2],
+                ref[0]*n[1] - ref[1]*n[0]
+            ]
+            mag_u = math.sqrt(sum(x*x for x in u))
+            u = [x / mag_u for x in u]
+            # v = n x u  (also lies in the plane, perpendicular to u)
+            v = [
+                n[1]*u[2] - n[2]*u[1],
+                n[2]*u[0] - n[0]*u[2],
+                n[0]*u[1] - n[1]*u[0]
+            ]
+            spread = 100.0  # 100mm spread for numerical stability
+            pts_mm = [
+                list(point_coords),
+                [point_coords[0] + u[0]*spread, point_coords[1] + u[1]*spread, point_coords[2] + u[2]*spread],
+                [point_coords[0] + v[0]*spread, point_coords[1] + v[1]*spread, point_coords[2] + v[2]*spread]
+            ]
+        else:
+            raise Exception("Provide either 'three_points' or 'point' + 'normal'")
+        
+        # --- Step 2: Compute normal from the three points ---
+        v1 = [pts_mm[1][i] - pts_mm[0][i] for i in range(3)]
+        v2 = [pts_mm[2][i] - pts_mm[0][i] for i in range(3)]
+        computed_normal = [
+            v1[1]*v2[2] - v1[2]*v2[1],
+            v1[2]*v2[0] - v1[0]*v2[2],
+            v1[0]*v2[1] - v1[1]*v2[0]
+        ]
+        mag = math.sqrt(sum(x*x for x in computed_normal))
+        if mag < 1e-10:
+            raise Exception("Three points are collinear — cannot define a plane")
+        computed_normal = [x / mag for x in computed_normal]
+        
+        # --- Step 3: Fast path — try setByPlane (works in direct design mode) ---
+        try:
+            p_cm = adsk.core.Point3D.create(pts_mm[0][0]/10, pts_mm[0][1]/10, pts_mm[0][2]/10)
+            nrm = adsk.core.Vector3D.create(*computed_normal)
+            nrm.normalize()
+            plane_geom = adsk.core.Plane.create(p_cm, nrm)
+            plane_input = planes.createInput()
+            plane_input.setByPlane(plane_geom)
+            constr_plane = planes.add(plane_input)
+            if name:
+                constr_plane.name = name
+            adsk.doEvents()
+            geo = constr_plane.geometry
+            return {
+                "success": True,
+                "method": "setByPlane",
+                "plane_id": constr_plane.name,
+                "name": constr_plane.name,
+                "origin_mm": [geo.origin.x*10, geo.origin.y*10, geo.origin.z*10],
+                "normal": [geo.normal.x, geo.normal.y, geo.normal.z]
+            }
+        except:
+            pass  # Parametric mode — fall through
+        
+        # --- Step 4: Parametric path — find or create sketch points, use setByThreePoints ---
+        tol_cm = tolerance_mm / 10.0
+        resolved_points = []   # will hold SketchPoint objects
+        helper_planes = []
+        helper_sketches = []
+        matched_info = []
+        
+        for i, coords in enumerate(pts_mm):
+            target_cm = adsk.core.Point3D.create(coords[0]/10, coords[1]/10, coords[2]/10)
+            
+            # Search every sketch for a nearby sketch point
+            best_sp = None
+            best_dist = float('inf')
+            best_sketch_name = ""
+            for sketch in root.sketches:
+                for j in range(sketch.sketchPoints.count):
+                    sp = sketch.sketchPoints.item(j)
+                    try:
+                        d = target_cm.distanceTo(sp.worldGeometry)
+                        if d < best_dist:
+                            best_dist = d
+                            best_sp = sp
+                            best_sketch_name = sketch.name
+                    except:
+                        continue
+            
+            if best_sp is not None and best_dist <= tol_cm:
+                resolved_points.append(best_sp)
+                matched_info.append({
+                    "point": i, "source": "existing",
+                    "sketch": best_sketch_name,
+                    "distance_mm": round(best_dist * 10, 4)
+                })
+            else:
+                # Create helper offset plane from XY at this Z, then a sketch point
+                z_cm = coords[2] / 10.0
+                off_input = planes.createInput()
+                off_input.setByOffset(
+                    root.xYConstructionPlane,
+                    adsk.core.ValueInput.createByReal(z_cm)
+                )
+                hp = planes.add(off_input)
+                hp.name = f"_ap_helper_plane_{i}"
+                helper_planes.append(hp.name)
+                
+                hs = root.sketches.add(hp)
+                hs.name = f"_ap_helper_sketch_{i}"
+                helper_sketches.append(hs.name)
+                
+                # On an XY-offset plane: sketch X = world X, sketch Y = world Y (in cm)
+                sp = hs.sketchPoints.add(
+                    adsk.core.Point3D.create(coords[0]/10, coords[1]/10, 0)
+                )
+                resolved_points.append(sp)
+                matched_info.append({
+                    "point": i, "source": "created",
+                    "helper_plane": hp.name, "helper_sketch": hs.name
+                })
+        
+        # Create the construction plane through the three resolved sketch points
+        plane_input = planes.createInput()
+        plane_input.setByThreePoints(resolved_points[0], resolved_points[1], resolved_points[2])
+        constr_plane = planes.add(plane_input)
+        
+        if name:
+            constr_plane.name = name
+        
+        adsk.doEvents()
+        geo = constr_plane.geometry
+        
+        return {
+            "success": True,
+            "method": "setByThreePoints",
+            "plane_id": constr_plane.name,
+            "name": constr_plane.name,
+            "origin_mm": [geo.origin.x * 10, geo.origin.y * 10, geo.origin.z * 10],
+            "normal": [geo.normal.x, geo.normal.y, geo.normal.z],
+            "point_resolution": matched_info,
+            "helper_geometry": {
+                "planes": helper_planes,
+                "sketches": helper_sketches,
+                "note": "Helper geometry supports the parametric plane. Deleting it will break the plane."
+            } if helper_planes else None
+        }
+    except Exception as e:
+        return {"error": True, "message": str(e), "traceback": traceback.format_exc()}
+
+
+def handle_create_plane_by_angle(body):
+    """Create a construction plane at an angle to a base plane, rotating around a line.
+    
+    This is essential for creating tilted planes like those in the coffee table design.
+    
+    Args:
+        base_plane: Base plane ID (xy, xz, yz, or custom name)
+        sketch_id: Sketch containing the rotation axis line
+        line_index: Index of the line in the sketch (default: 0)
+        angle: Rotation angle in degrees (positive = CCW when looking along line)
+        name: Optional name for the plane
+    """
+    import math
+    try:
+        root = get_root()
+        planes = root.constructionPlanes
+        
+        base_plane_id = body.get("base_plane", "xy")
+        sketch_id = body.get("sketch_id")
+        line_index = body.get("line_index", 0)
+        angle_deg = body.get("angle", 0)
+        name = body.get("name")
+        
+        # Get base plane
+        if base_plane_id == "xy":
+            base = root.xYConstructionPlane
+        elif base_plane_id == "xz":
+            base = root.xZConstructionPlane
+        elif base_plane_id == "yz":
+            base = root.yZConstructionPlane
+        else:
+            base = None
+            for plane in root.constructionPlanes:
+                if plane.name == base_plane_id:
+                    base = plane
+                    break
+        
+        if not base:
+            raise Exception(f"Base plane not found: {base_plane_id}")
+        
+        # Get the sketch and line
+        sketch = get_sketch(sketch_id)
+        if line_index >= sketch.sketchCurves.sketchLines.count:
+            raise Exception(f"Line index {line_index} out of range")
+        
+        line = sketch.sketchCurves.sketchLines.item(line_index)
+        
+        # Convert angle to radians
+        angle_rad = angle_deg * math.pi / 180.0
+        angle_value = adsk.core.ValueInput.createByReal(angle_rad)
+        
+        # Create plane input
+        plane_input = planes.createInput()
+        plane_input.setByAngle(line, angle_value, base)
+        
+        # Add the construction plane
+        constr_plane = planes.add(plane_input)
+        if name:
+            constr_plane.name = name
+        
+        adsk.doEvents()
+        
+        # Get the resulting plane geometry
+        geo = constr_plane.geometry
+        origin = geo.origin
+        normal = geo.normal
+        
+        return {
+            "success": True,
+            "plane_id": constr_plane.name,
+            "name": constr_plane.name,
+            "origin_mm": [origin.x * 10, origin.y * 10, origin.z * 10],
+            "normal": [normal.x, normal.y, normal.z]
+        }
+    except Exception as e:
+        return {"error": True, "message": str(e), "traceback": traceback.format_exc()}
+
+
+def handle_create_polyhedron(body):
+    """Create a solid polyhedron from vertices and triangular faces.
+    
+    This is the key tool for creating faceted, origami-like geometry.
+    
+    Args:
+        vertices: Dict of vertex_id -> [x, y, z] coordinates in mm
+                  e.g., {"V1": [0, 0, 0], "V2": [100, 0, 0], ...}
+        faces: List of [vertex_id1, vertex_id2, vertex_id3] for each triangular face
+               e.g., [["V1", "V2", "V3"], ["V1", "V3", "V4"], ...]
+               Vertices should be in counter-clockwise order for outward normal
+        name: Optional name for the body
+        thickness: If provided, creates a shell with this thickness instead of solid
+    """
+    try:
+        root = get_root()
+        
+        vertices_dict = body.get("vertices", {})
+        faces_list = body.get("faces", [])
+        name = body.get("name", "Polyhedron")
+        thickness = body.get("thickness")
+        
+        if len(vertices_dict) < 4:
+            return {"error": True, "message": "Need at least 4 vertices for a polyhedron"}
+        if len(faces_list) < 4:
+            return {"error": True, "message": "Need at least 4 faces for a closed polyhedron"}
+        
+        # Convert vertices to Point3D (in cm for Fusion)
+        vertex_points = {}
+        for vid, coords in vertices_dict.items():
+            vertex_points[vid] = adsk.core.Point3D.create(
+                coords[0] / 10.0,
+                coords[1] / 10.0,
+                coords[2] / 10.0
+            )
+        
+        # Get the TempBRepManager for creating geometry
+        temp_brep = adsk.fusion.TemporaryBRepManager.get()
+        
+        # We'll create each face as a bounded planar surface, then stitch them
+        surface_bodies = []
+        
+        for i, face_verts in enumerate(faces_list):
+            if len(face_verts) < 3:
+                continue
+                
+            # Get the three vertices
+            try:
+                p1 = vertex_points[face_verts[0]]
+                p2 = vertex_points[face_verts[1]]
+                p3 = vertex_points[face_verts[2]]
+            except KeyError as e:
+                return {"error": True, "message": f"Unknown vertex: {e}"}
+            
+            # Create vectors for the plane
+            v1 = adsk.core.Vector3D.create(p2.x - p1.x, p2.y - p1.y, p2.z - p1.z)
+            v2 = adsk.core.Vector3D.create(p3.x - p1.x, p3.y - p1.y, p3.z - p1.z)
+            
+            # Compute normal (cross product)
+            normal = v1.crossProduct(v2)
+            if normal.length < 0.0001:
+                continue  # Degenerate triangle
+            normal.normalize()
+            
+            # Create a bounded planar surface (triangle)
+            # Use point collection for the boundary
+            points = adsk.core.ObjectCollection.create()
+            points.add(p1)
+            points.add(p2)
+            points.add(p3)
+            
+            # Create wire body from the triangle edges
+            lines = []
+            lines.append(adsk.core.Line3D.create(p1, p2))
+            lines.append(adsk.core.Line3D.create(p2, p3))
+            lines.append(adsk.core.Line3D.create(p3, p1))
+            
+            wire_body, edge_map = temp_brep.createWireFromCurves(lines)
+            if wire_body:
+                # Create planar surface from wire
+                try:
+                    face_body = temp_brep.createFaceFromPlanarWires([wire_body])
+                    if face_body:
+                        surface_bodies.append(face_body)
+                except:
+                    pass  # Skip problematic faces
+        
+        if len(surface_bodies) == 0:
+            return {"error": True, "message": "Could not create any faces"}
+        
+        # Try to stitch all the faces together into a solid
+        try:
+            # Start with the first body and stitch others to it
+            result_body = surface_bodies[0]
+            
+            if len(surface_bodies) > 1:
+                tools = adsk.core.ObjectCollection.create()
+                for i in range(1, len(surface_bodies)):
+                    tools.add(surface_bodies[i])
+                
+                # Stitch the surfaces together
+                result_body = temp_brep.stitch(surface_bodies, 0.01)  # 0.01 cm tolerance
+        except Exception as stitch_error:
+            # If stitch fails, try to create the body from the first face at least
+            result_body = surface_bodies[0] if surface_bodies else None
+        
+        if not result_body:
+            return {"error": True, "message": "Failed to stitch faces into a body"}
+        
+        # Add the temp body to the design as a real body
+        base_feature = root.features.baseFeatures.add()
+        base_feature.startEdit()
+        
+        real_body = root.bRepBodies.add(result_body, base_feature)
+        real_body.name = name
+        
+        base_feature.finishEdit()
+        
+        adsk.doEvents()
+        
+        return {
+            "success": True,
+            "body_id": name,
+            "body_name": real_body.name,
+            "vertex_count": len(vertices_dict),
+            "face_count": len(faces_list),
+            "faces_created": len(surface_bodies)
+        }
+        
+    except Exception as e:
+        return {"error": True, "message": str(e), "traceback": traceback.format_exc()}
+
+
+def handle_create_triangular_prism(body):
+    """Create a triangular prism from 3 vertices and a height/direction.
+    
+    Simpler than full polyhedron - just extrudes a triangle.
+    
+    Args:
+        v1: [x, y, z] first vertex in mm
+        v2: [x, y, z] second vertex in mm
+        v3: [x, y, z] third vertex in mm
+        height: Height of extrusion in mm (along triangle normal)
+        name: Optional name for the body
+    """
+    try:
+        root = get_root()
+        
+        v1 = body.get("v1", [0, 0, 0])
+        v2 = body.get("v2", [100, 0, 0])
+        v3 = body.get("v3", [50, 100, 0])
+        height = body.get("height", 50)
+        name = body.get("name")
+        
+        # Convert to cm
+        p1 = adsk.core.Point3D.create(v1[0]/10, v1[1]/10, v1[2]/10)
+        p2 = adsk.core.Point3D.create(v2[0]/10, v2[1]/10, v2[2]/10)
+        p3 = adsk.core.Point3D.create(v3[0]/10, v3[1]/10, v3[2]/10)
+        
+        # Calculate plane normal
+        vec1 = adsk.core.Vector3D.create(p2.x-p1.x, p2.y-p1.y, p2.z-p1.z)
+        vec2 = adsk.core.Vector3D.create(p3.x-p1.x, p3.y-p1.y, p3.z-p1.z)
+        normal = vec1.crossProduct(vec2)
+        normal.normalize()
+        
+        # Create construction plane through the triangle
+        plane_geom = adsk.core.Plane.create(p1, normal)
+        planes = root.constructionPlanes
+        plane_input = planes.createInput()
+        plane_input.setByPlane(plane_geom)
+        constr_plane = planes.add(plane_input)
+        constr_plane.name = "_temp_tri_plane"
+        
+        # Create sketch on this plane
+        sketch = root.sketches.add(constr_plane)
+        sketch.name = "_temp_tri_sketch"
+        
+        # Project points onto sketch plane and draw triangle
+        # The sketch has its own coordinate system - need to transform
+        lines = sketch.sketchCurves.sketchLines
+        
+        # Get the transform from world to sketch
+        sketch_transform = sketch.transform
+        sketch_transform.invert()
+        
+        # Transform world points to sketch space
+        sp1 = p1.copy()
+        sp2 = p2.copy()
+        sp3 = p3.copy()
+        sp1.transformBy(sketch_transform)
+        sp2.transformBy(sketch_transform)
+        sp3.transformBy(sketch_transform)
+        
+        # Draw on sketch (use only X, Y since it's a 2D sketch)
+        sketch_p1 = adsk.core.Point3D.create(sp1.x, sp1.y, 0)
+        sketch_p2 = adsk.core.Point3D.create(sp2.x, sp2.y, 0)
+        sketch_p3 = adsk.core.Point3D.create(sp3.x, sp3.y, 0)
+        
+        lines.addByTwoPoints(sketch_p1, sketch_p2)
+        lines.addByTwoPoints(sketch_p2, sketch_p3)
+        lines.addByTwoPoints(sketch_p3, sketch_p1)
+        
+        adsk.doEvents()
+        
+        # Get profile and extrude
+        if sketch.profiles.count == 0:
+            return {"error": True, "message": "No closed profile created"}
+        
+        profile = sketch.profiles.item(0)
+        extrudes = root.features.extrudeFeatures
+        extrude_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+        
+        # Extrude symmetrically along normal
+        extrude_input.setSymmetricExtent(adsk.core.ValueInput.createByReal(height/10/2), True)
+        
+        extrude = extrudes.add(extrude_input)
+        adsk.doEvents()
+        
+        new_body = extrude.bodies.item(0)
+        if name:
+            new_body.name = name
+        
+        return {
+            "success": True,
+            "body_id": new_body.name,
+            "body_name": new_body.name
+        }
+        
+    except Exception as e:
+        return {"error": True, "message": str(e), "traceback": traceback.format_exc()}
+
+
 ROUTES = {
     # Document
     "/ping": handle_ping,
@@ -6499,6 +7965,10 @@ ROUTES = {
     "/draw_spline": handle_draw_spline,
     "/sketch_fillet": handle_sketch_fillet,
     "/finish_sketch": handle_finish_sketch,
+    "/analyze_sketch_gaps": handle_analyze_sketch_gaps,
+    "/close_sketch_gaps": handle_close_sketch_gaps,
+    "/recreate_sketch_as_polygon": handle_recreate_sketch_as_polygon,
+    "/apply_coincident_constraints": handle_apply_coincident_constraints,
     "/get_sketch_profiles": handle_get_sketch_profiles,
     "/list_sketch_dimensions": handle_list_sketch_dimensions,
     "/edit_sketch_dimension": handle_edit_sketch_dimension,
@@ -6516,6 +7986,12 @@ ROUTES = {
     "/chamfer_edges": handle_chamfer_edges,
     "/boolean": handle_boolean,
     
+    # Shell, Split & Surface
+    "/shell": handle_shell,
+    "/split_body": handle_split_body,
+    "/create_patch": handle_create_patch,
+    "/stitch": handle_stitch,
+    
     # Organic Modeling & Primitives
     "/loft": handle_loft,
     "/sweep": handle_sweep,
@@ -6524,6 +8000,12 @@ ROUTES = {
     "/create_cylinder": handle_create_cylinder,
     "/create_box": handle_create_box,
     "/create_hole": handle_create_hole,
+    
+    # Polyhedron / Faceted Geometry
+    "/create_angled_plane": handle_create_angled_plane,
+    "/create_plane_by_angle": handle_create_plane_by_angle,
+    "/create_polyhedron": handle_create_polyhedron,
+    "/create_triangular_prism": handle_create_triangular_prism,
     
     # Selection & Query
     "/list_bodies": handle_list_bodies,

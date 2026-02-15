@@ -124,6 +124,43 @@ const TOOLS = [
       required: ["base_plane", "offset"],
     },
   },
+  {
+    name: "fusion_create_angled_plane",
+    description: `Create a construction plane at ANY arbitrary orientation using point+normal or three points.
+
+ESSENTIAL for miter joints - create bisector planes between adjacent faces.
+To compute a bisector plane between two faces with normals N1 and N2:
+  - bisector_normal = normalize(N1 + N2)
+  - point = any point on the shared edge
+
+Works in both parametric and direct design modes.`,
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        point: { type: "array", items: { type: "number" }, description: "[x, y, z] point on the plane in mm" },
+        normal: { type: "array", items: { type: "number" }, description: "[x, y, z] normal vector of the plane" },
+        three_points: { type: "array", items: { type: "array", items: { type: "number" } }, description: "[[x,y,z],[x,y,z],[x,y,z]] three points defining the plane" },
+        name: { type: "string", description: "Optional plane name" },
+        tolerance: { type: "number", description: "Search radius in mm for matching existing sketch points (default: 1.0)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "fusion_create_plane_by_angle",
+    description: "Create a construction plane at an angle to a base plane, rotating around a sketch line. Useful for tilted/angled reference planes.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        base_plane: { type: "string", description: "Base plane ID (xy, xz, yz, or custom name)" },
+        sketch_id: { type: "string", description: "Sketch containing the rotation axis line" },
+        line_index: { type: "number", description: "Index of the line in the sketch (default: 0)" },
+        angle: { type: "number", description: "Rotation angle in degrees" },
+        name: { type: "string", description: "Optional plane name" },
+      },
+      required: ["base_plane", "sketch_id", "angle"],
+    },
+  },
 
   // ============ Sketch Operations ============
   {
@@ -460,6 +497,95 @@ Example for box joint fingers that join correctly:
         keep_tools: { type: "boolean", description: "Keep tool bodies" },
       },
       required: ["operation", "target_body", "tool_bodies"],
+    },
+  },
+
+  // ============ Shell & Split ============
+  {
+    name: "fusion_shell",
+    description: `Shell a body to create thin-walled geometry with natural miter joints at every edge.
+
+ESSENTIAL for converting a solid polyhedron into paneled geometry:
+1. Create solid polyhedron (e.g., via extrude + union)
+2. Shell it at the desired panel_thickness
+3. Result has perfectly mitered internal corners
+
+Args:
+- body_id: Body to shell
+- thickness: Wall thickness in mm
+- remove_faces: Optional face IDs to remove (open the shell). Omit for fully enclosed shell.
+- direction: "inside" (default), "outside", or "both"`,
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        body_id: { type: "string", description: "Name of the body to shell" },
+        thickness: { type: "number", description: "Wall thickness in mm" },
+        remove_faces: { type: "array", items: { type: "string" }, description: "Face IDs to remove (open the shell). Omit for fully enclosed." },
+        direction: { type: "string", enum: ["inside", "outside", "both"], description: "Shell direction (default: inside)" },
+      },
+      required: ["body_id", "thickness"],
+    },
+  },
+  {
+    name: "fusion_split_body",
+    description: `Split a body using a construction plane or another body as the cutting tool.
+
+Returns two or more separate bodies from the split. Essential for:
+- Cutting panels at bisector planes for miter joints
+- Separating a shelled body into individual panels
+- Creating half-models or sectioned views
+
+The splitting tool can be a standard plane (xy, xz, yz), a custom construction plane, or another body.`,
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        body_id: { type: "string", description: "Name of the body to split" },
+        splitting_tool: { type: "string", description: "Plane name (xy, xz, yz, custom) or body name to split with" },
+        keep: { type: "string", enum: ["both", "positive", "negative"], description: "Which side(s) to keep (default: both)" },
+      },
+      required: ["body_id", "splitting_tool"],
+    },
+  },
+
+  // ============ Surface Tools ============
+  {
+    name: "fusion_create_patch",
+    description: `Create a zero-thickness surface (patch) from a sketch profile.
+
+Essential for building solid polyhedra from face sketches:
+1. Create a patch for each face sketch → 8 flat surface bodies
+2. Stitch all surfaces together → closed surface becomes a SOLID
+3. Shell the solid → creates paneled geometry with perfect miter joints
+
+Much simpler than trying to intersect half-spaces or union thick panels.`,
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        sketch_id: { type: "string", description: "Sketch containing the profile" },
+        profile_index: { type: "number", description: "Which profile to patch (default: 0)" },
+        component: { type: "string", description: "Optional component name" },
+        body_name: { type: "string", description: "Optional name for the resulting surface body" },
+      },
+      required: ["sketch_id"],
+    },
+  },
+  {
+    name: "fusion_stitch",
+    description: `Stitch multiple surface bodies together into one body.
+
+When the stitched surfaces form a CLOSED (watertight) boundary,
+Fusion automatically converts the result into a SOLID body.
+This is the key to creating solid polyhedra from face patches.
+
+Returns is_solid=true and watertight=true when the surfaces fully enclose a volume.`,
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        body_ids: { type: "array", items: { type: "string" }, description: "List of body names to stitch together (minimum 2)" },
+        tolerance: { type: "number", description: "Stitch tolerance in mm (default: 0.1)" },
+        body_name: { type: "string", description: "Optional name for the resulting body" },
+      },
+      required: ["body_ids"],
     },
   },
 
@@ -1128,6 +1254,8 @@ const ENDPOINTS: Record<string, string> = {
   fusion_save: "/save",
   fusion_list_planes: "/list_planes",
   fusion_create_offset_plane: "/create_offset_plane",
+  fusion_create_angled_plane: "/create_angled_plane",
+  fusion_create_plane_by_angle: "/create_plane_by_angle",
   fusion_create_sketch: "/create_sketch",
   fusion_create_sketch_on_face: "/create_sketch_on_face",
   fusion_draw_line: "/draw_line",
@@ -1152,6 +1280,10 @@ const ENDPOINTS: Record<string, string> = {
   fusion_fillet_edges: "/fillet_edges",
   fusion_chamfer_edges: "/chamfer_edges",
   fusion_boolean: "/boolean",
+  fusion_shell: "/shell",
+  fusion_split_body: "/split_body",
+  fusion_create_patch: "/create_patch",
+  fusion_stitch: "/stitch",
   // Organic Modeling
   fusion_loft: "/loft",
   fusion_sweep: "/sweep",
