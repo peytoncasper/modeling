@@ -1,0 +1,394 @@
+#!/usr/bin/env python3
+"""CLI for Fusion 360 construction / reference geometry — planes, axes, points, measurements.
+
+Wraps the FusionMCPBridge HTTP API at localhost:8080.
+All coordinates/dimensions are in mm. All output is JSON.
+
+Examples — Planes:
+    fusion-construction planes
+    fusion-construction offset-plane --base xy --offset 50 --name Shelf
+    fusion-construction angled-plane --point 50,50,50 --normal 1,1,0
+    fusion-construction angled-plane --p1 0,0,0 --p2 100,0,0 --p3 0,100,50
+    fusion-construction plane-by-angle --base xy --sketch AxisSketch --angle 45
+    fusion-construction midplane --p1 xy --p2 MyOffsetPlane
+    fusion-construction tangent-plane --body Cylinder1 --face Cylinder1_face_2
+    fusion-construction delete-plane --name MyPlane
+
+Examples — Axes:
+    fusion-construction axes
+    fusion-construction axis-2pt --p1 0,0,0 --p2 100,100,0 --name Diagonal
+    fusion-construction axis-edge --body Body1 --edge Body1_edge_0
+    fusion-construction axis-perp --body Body1 --face Body1_face_0
+    fusion-construction axis-intersect --p1 xy --p2 xz
+    fusion-construction delete-axis --name MyAxis
+
+Examples — Points:
+    fusion-construction points
+    fusion-construction point --pos 50,30,20 --name Ref1
+    fusion-construction point-vertex --body Body1 --index 0
+    fusion-construction point-center --body Body1 --entity Body1_edge_3
+    fusion-construction delete-point --name Ref1
+
+Examples — Measurements:
+    fusion-construction distance --e1 body:Body1 --e2 body:Body2
+    fusion-construction distance --e1 point:50,30,20 --e2 point:0,0,0
+    fusion-construction distance --e1 face:Body1:Body1_face_0 --e2 plane:xy
+    fusion-construction angle --e1 plane:xy --e2 plane:xz
+    fusion-construction angle --e1 face:Body1:Body1_face_0 --e2 plane:xy
+    fusion-construction measure --body Body1
+    fusion-construction vertices --body Body1
+"""
+
+import argparse
+import json
+import sys
+import urllib.request
+import urllib.error
+
+BRIDGE = "http://localhost:8080"
+
+
+def call(endpoint, body=None):
+    data = json.dumps(body or {}).encode()
+    req = urllib.request.Request(
+        f"{BRIDGE}{endpoint}", data=data,
+        headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.URLError as e:
+        return {"error": True, "message": f"Cannot connect to Fusion bridge: {e}"}
+    except Exception as e:
+        return {"error": True, "message": str(e)}
+
+
+def out(data):
+    print(json.dumps(data, indent=2))
+
+
+def p3(s):
+    """Parse 'x,y,z' into [x, y, z]."""
+    parts = [float(x.strip()) for x in s.split(",")]
+    if len(parts) != 3:
+        sys.exit(f"Error: expected x,y,z but got '{s}'")
+    return parts
+
+
+def parse_entity(s):
+    """Parse an entity specifier into a dict for measure endpoints.
+
+    Formats:
+        body:BodyName          -> {"type": "body", "name": "BodyName"}
+        face:BodyName:FaceID   -> {"type": "face", "body": "BodyName", "face": "FaceID"}
+        edge:BodyName:EdgeID   -> {"type": "edge", "body": "BodyName", "edge": "EdgeID"}
+        plane:xy               -> {"type": "plane", "name": "xy"}
+        axis:x                 -> {"type": "axis", "name": "x"}
+        point:x,y,z            -> {"type": "point", "position": [x, y, z]}
+    """
+    parts = s.split(":", 1)
+    t = parts[0]
+    val = parts[1] if len(parts) > 1 else ""
+
+    if t == "body":
+        return {"type": "body", "name": val}
+    elif t == "face":
+        bp = val.split(":", 1)
+        return {"type": "face", "body": bp[0], "face": bp[1] if len(bp) > 1 else "0"}
+    elif t == "edge":
+        bp = val.split(":", 1)
+        return {"type": "edge", "body": bp[0], "edge": bp[1] if len(bp) > 1 else "0"}
+    elif t == "plane":
+        return {"type": "plane", "name": val}
+    elif t == "axis":
+        return {"type": "axis", "name": val}
+    elif t == "point":
+        return {"type": "point", "position": p3(val)}
+    else:
+        sys.exit(f"Unknown entity type '{t}'. Use body:, face:, edge:, plane:, axis:, or point:")
+
+
+# ── Plane commands ────────────────────────────────────────────
+
+def cmd_planes(args):
+    out(call("/list_planes", {}))
+
+
+def cmd_offset_plane(args):
+    payload = {"base_plane": args.base, "offset": args.offset}
+    if args.component:
+        payload["component"] = args.component
+    if args.name:
+        payload["name"] = args.name
+    out(call("/create_offset_plane", payload))
+
+
+def cmd_angled_plane(args):
+    payload = {}
+    if args.point and args.normal:
+        payload["point"] = p3(args.point)
+        payload["normal"] = p3(args.normal)
+    elif args.p1 and args.p2 and args.p3_pt:
+        payload["three_points"] = [p3(args.p1), p3(args.p2), p3(args.p3_pt)]
+    else:
+        sys.exit("Provide --point + --normal, or --p1 --p2 --p3")
+    if args.name:
+        payload["name"] = args.name
+    out(call("/create_angled_plane", payload))
+
+
+def cmd_plane_by_angle(args):
+    payload = {"base_plane": args.base, "sketch_id": args.sketch,
+               "line_index": args.line, "angle": args.angle}
+    if args.name:
+        payload["name"] = args.name
+    out(call("/create_plane_by_angle", payload))
+
+
+def cmd_midplane(args):
+    payload = {"plane1": args.p1, "plane2": args.p2}
+    if args.name:
+        payload["name"] = args.name
+    out(call("/create_midplane", payload))
+
+
+def cmd_tangent_plane(args):
+    payload = {"body_id": args.body, "face_id": args.face}
+    if args.point:
+        payload["point"] = p3(args.point)
+    if args.name:
+        payload["name"] = args.name
+    out(call("/create_tangent_plane", payload))
+
+
+def cmd_delete_plane(args):
+    out(call("/delete_plane", {"name": args.name}))
+
+
+# ── Axis commands ─────────────────────────────────────────────
+
+def cmd_axes(args):
+    out(call("/list_axes", {}))
+
+
+def cmd_axis_2pt(args):
+    payload = {"point1": p3(args.p1), "point2": p3(args.p2)}
+    if args.name:
+        payload["name"] = args.name
+    out(call("/create_axis_two_points", payload))
+
+
+def cmd_axis_edge(args):
+    payload = {"body_id": args.body, "edge_id": args.edge}
+    if args.name:
+        payload["name"] = args.name
+    out(call("/create_axis_by_edge", payload))
+
+
+def cmd_axis_perp(args):
+    payload = {"body_id": args.body, "face_id": args.face}
+    if args.name:
+        payload["name"] = args.name
+    out(call("/create_axis_perpendicular", payload))
+
+
+def cmd_axis_intersect(args):
+    payload = {"plane1": args.p1, "plane2": args.p2}
+    if args.name:
+        payload["name"] = args.name
+    out(call("/create_axis_intersection", payload))
+
+
+def cmd_delete_axis(args):
+    out(call("/delete_axis", {"name": args.name}))
+
+
+# ── Point commands ────────────────────────────────────────────
+
+def cmd_points(args):
+    out(call("/list_construction_points", {}))
+
+
+def cmd_point(args):
+    payload = {"position": p3(args.pos)}
+    if args.name:
+        payload["name"] = args.name
+    out(call("/create_construction_point", payload))
+
+
+def cmd_point_vertex(args):
+    payload = {"body_id": args.body, "vertex_index": args.index}
+    if args.name:
+        payload["name"] = args.name
+    out(call("/create_point_at_vertex", payload))
+
+
+def cmd_point_center(args):
+    payload = {"body_id": args.body, "entity_id": args.entity}
+    if args.name:
+        payload["name"] = args.name
+    out(call("/create_point_at_center", payload))
+
+
+def cmd_delete_point(args):
+    out(call("/delete_construction_point", {"name": args.name}))
+
+
+# ── Measurement commands ──────────────────────────────────────
+
+def cmd_distance(args):
+    out(call("/measure_distance", {"entity1": parse_entity(args.e1),
+                                    "entity2": parse_entity(args.e2)}))
+
+
+def cmd_angle(args):
+    out(call("/measure_angle", {"entity1": parse_entity(args.e1),
+                                 "entity2": parse_entity(args.e2)}))
+
+
+def cmd_measure_body(args):
+    out(call("/measure_body", {"body_id": args.body}))
+
+
+def cmd_vertices(args):
+    out(call("/list_vertices", {"body_id": args.body}))
+
+
+# ── argparse ──────────────────────────────────────────────────
+
+def build_parser():
+    parser = argparse.ArgumentParser(prog="fusion-construction",
+                                      description="Fusion 360 construction geometry CLI")
+    sub = parser.add_subparsers(dest="command")
+
+    # ── Planes ────
+    sub.add_parser("planes", help="List all construction planes").set_defaults(func=cmd_planes)
+
+    p = sub.add_parser("offset-plane", help="Create offset plane")
+    p.add_argument("--base", default="xy", help="Base plane: xy, xz, yz, or name")
+    p.add_argument("--offset", type=float, required=True, help="Offset distance in mm")
+    p.add_argument("--component")
+    p.add_argument("--name")
+    p.set_defaults(func=cmd_offset_plane)
+
+    p = sub.add_parser("angled-plane", help="Create plane by point+normal or three points")
+    p.add_argument("--point", help="Point on plane x,y,z")
+    p.add_argument("--normal", help="Normal vector x,y,z")
+    p.add_argument("--p1", help="First point x,y,z")
+    p.add_argument("--p2", help="Second point x,y,z")
+    p.add_argument("--p3", dest="p3_pt", help="Third point x,y,z")
+    p.add_argument("--name")
+    p.set_defaults(func=cmd_angled_plane)
+
+    p = sub.add_parser("plane-by-angle", help="Plane rotated around a sketch line")
+    p.add_argument("--base", default="xy")
+    p.add_argument("--sketch", required=True)
+    p.add_argument("--line", type=int, default=0)
+    p.add_argument("--angle", type=float, required=True, help="Angle in degrees")
+    p.add_argument("--name")
+    p.set_defaults(func=cmd_plane_by_angle)
+
+    p = sub.add_parser("midplane", help="Create midplane between two planes/faces")
+    p.add_argument("--p1", required=True, help="First plane ID or body:face_id")
+    p.add_argument("--p2", required=True, help="Second plane ID or body:face_id")
+    p.add_argument("--name")
+    p.set_defaults(func=cmd_midplane)
+
+    p = sub.add_parser("tangent-plane", help="Plane tangent to a face")
+    p.add_argument("--body", required=True)
+    p.add_argument("--face", required=True)
+    p.add_argument("--point", help="Point on surface x,y,z")
+    p.add_argument("--name")
+    p.set_defaults(func=cmd_tangent_plane)
+
+    p = sub.add_parser("delete-plane", help="Delete a construction plane")
+    p.add_argument("--name", required=True)
+    p.set_defaults(func=cmd_delete_plane)
+
+    # ── Axes ──────
+    sub.add_parser("axes", help="List all construction axes").set_defaults(func=cmd_axes)
+
+    p = sub.add_parser("axis-2pt", help="Create axis through two points")
+    p.add_argument("--p1", required=True, help="First point x,y,z")
+    p.add_argument("--p2", required=True, help="Second point x,y,z")
+    p.add_argument("--name")
+    p.set_defaults(func=cmd_axis_2pt)
+
+    p = sub.add_parser("axis-edge", help="Create axis along a body edge")
+    p.add_argument("--body", required=True)
+    p.add_argument("--edge", required=True)
+    p.add_argument("--name")
+    p.set_defaults(func=cmd_axis_edge)
+
+    p = sub.add_parser("axis-perp", help="Create axis perpendicular to a face")
+    p.add_argument("--body", required=True)
+    p.add_argument("--face", required=True)
+    p.add_argument("--name")
+    p.set_defaults(func=cmd_axis_perp)
+
+    p = sub.add_parser("axis-intersect", help="Create axis at intersection of two planes")
+    p.add_argument("--p1", required=True, help="First plane ID")
+    p.add_argument("--p2", required=True, help="Second plane ID")
+    p.add_argument("--name")
+    p.set_defaults(func=cmd_axis_intersect)
+
+    p = sub.add_parser("delete-axis", help="Delete a construction axis")
+    p.add_argument("--name", required=True)
+    p.set_defaults(func=cmd_delete_axis)
+
+    # ── Points ────
+    sub.add_parser("points", help="List all construction points").set_defaults(func=cmd_points)
+
+    p = sub.add_parser("point", help="Create construction point at coordinates")
+    p.add_argument("--pos", required=True, help="Position x,y,z in mm")
+    p.add_argument("--name")
+    p.set_defaults(func=cmd_point)
+
+    p = sub.add_parser("point-vertex", help="Create point at a body vertex")
+    p.add_argument("--body", required=True)
+    p.add_argument("--index", type=int, default=0)
+    p.add_argument("--name")
+    p.set_defaults(func=cmd_point_vertex)
+
+    p = sub.add_parser("point-center", help="Create point at center of edge/face")
+    p.add_argument("--body", required=True)
+    p.add_argument("--entity", required=True, help="Edge or face ID")
+    p.add_argument("--name")
+    p.set_defaults(func=cmd_point_center)
+
+    p = sub.add_parser("delete-point", help="Delete a construction point")
+    p.add_argument("--name", required=True)
+    p.set_defaults(func=cmd_delete_point)
+
+    # ── Measurements ────
+    p = sub.add_parser("distance", help="Measure distance between two entities")
+    p.add_argument("--e1", required=True, help="Entity spec: body:Name, face:B:F, point:x,y,z, plane:xy, etc.")
+    p.add_argument("--e2", required=True, help="Entity spec")
+    p.set_defaults(func=cmd_distance)
+
+    p = sub.add_parser("angle", help="Measure angle between two planes/faces")
+    p.add_argument("--e1", required=True, help="plane:xy or face:Body1:Body1_face_0")
+    p.add_argument("--e2", required=True, help="plane:xz or face:Body1:Body1_face_1")
+    p.set_defaults(func=cmd_angle)
+
+    p = sub.add_parser("measure", help="Body physical properties (volume, area, CoM)")
+    p.add_argument("--body", required=True)
+    p.set_defaults(func=cmd_measure_body)
+
+    p = sub.add_parser("vertices", help="List all vertices of a body")
+    p.add_argument("--body", required=True)
+    p.set_defaults(func=cmd_vertices)
+
+    return parser
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

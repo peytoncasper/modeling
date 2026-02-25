@@ -273,6 +273,76 @@ class FrameManager:
             frame = Frame.from_dict(frame_data)
             self.frames[frame.name] = frame
 
+    # ------------------------------------------------------------------
+    # NAV STATE integration methods
+    # ------------------------------------------------------------------
+
+    def get_active_frame(self, focus_kind: Optional[str] = None,
+                         focus_id: Optional[str] = None) -> Optional["Frame"]:
+        """Return the frame most relevant to the current editing context.
+
+        Args:
+            focus_kind: "body", "sketch", "feature", etc.
+            focus_id: Entity name or id.
+
+        Returns:
+            Best matching Frame, or WorldFrame as fallback.
+        """
+        if focus_kind == "body" and focus_id:
+            frame = self.frames.get(f"{focus_id}_Frame")
+            if frame:
+                return frame
+
+        if focus_kind == "sketch" and focus_id:
+            frame = self.frames.get(f"{focus_id}_Frame")
+            if frame:
+                return frame
+
+        # Try any frame whose metadata references this entity
+        if focus_id:
+            for f in self.frames.values():
+                if f.metadata.get("body_name") == focus_id:
+                    return f
+
+        return self.frames.get("WorldFrame")
+
+    def get_nearby_frames(self, origin: List[float], radius_mm: float = 50.0) -> List["Frame"]:
+        """Return frames whose origin is within radius_mm of a point.
+
+        Useful for LOCAL_GRAPH nearby.frames population.
+        """
+        result = []
+        for f in self.frames.values():
+            if f.type in ("world", "plane"):
+                continue
+            dist = math.sqrt(sum((a - b) ** 2 for a, b in zip(f.origin, origin)))
+            if dist <= radius_mm:
+                result.append(f)
+        return result
+
+    def get_frame_for_entity(self, entity_type: str, entity_name: str) -> Optional["Frame"]:
+        """Find the frame associated with a named entity.
+
+        Checks body frames, sketch frames, and metadata references.
+        """
+        # Direct name match
+        candidates = [
+            f"{entity_name}_Frame",
+            entity_name,
+        ]
+        for name in candidates:
+            if name in self.frames:
+                return self.frames[name]
+
+        # Metadata search
+        for f in self.frames.values():
+            if f.metadata.get("body_name") == entity_name:
+                return f
+            if f.metadata.get("sketch_name") == entity_name:
+                return f
+
+        return None
+
 
 
 

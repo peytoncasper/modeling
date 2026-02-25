@@ -1,0 +1,270 @@
+#!/usr/bin/env python3
+"""CLI for Fusion 360 camera, viewport, screenshot, and export operations.
+
+Wraps the FusionMCPBridge HTTP API at localhost:8080.
+All coordinates in mm. All output is JSON.
+
+Examples — Views:
+    fusion-camera view front
+    fusion-camera view isometric
+    fusion-camera view top --no-fit
+    fusion-camera fit
+
+Examples — Camera control:
+    fusion-camera get
+    fusion-camera set --eye 500,500,500 --target 0,0,0
+    fusion-camera orbit --yaw 45 --pitch 20
+    fusion-camera zoom --factor 2
+    fusion-camera zoom --factor 0.5
+    fusion-camera pan --offset 100,0,0
+    fusion-camera look-at --target 50,40,10 --distance 500 --elevation 30 --azimuth 45
+
+Examples — Projection & style:
+    fusion-camera projection perspective
+    fusion-camera projection orthographic
+    fusion-camera style shaded_wireframe
+
+Examples — Screenshot:
+    fusion-camera screenshot
+    fusion-camera screenshot --view front --width 3840 --height 2160
+    fusion-camera screenshot --path ~/Desktop/model.png
+    fusion-camera save ~/Desktop/render.png --view isometric
+
+Examples — Export:
+    fusion-camera export stl ~/Desktop/model.stl
+    fusion-camera export step ~/Desktop/model.step
+    fusion-camera export stl ~/Desktop/model.stl --refinement high
+"""
+
+import argparse
+import json
+import sys
+import urllib.request
+import urllib.error
+
+BRIDGE = "http://localhost:8080"
+
+
+def call(endpoint, body=None):
+    data = json.dumps(body or {}).encode()
+    req = urllib.request.Request(
+        f"{BRIDGE}{endpoint}", data=data,
+        headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.URLError as e:
+        return {"error": True, "message": f"Cannot connect to Fusion bridge: {e}"}
+    except Exception as e:
+        return {"error": True, "message": str(e)}
+
+
+def out(data):
+    if "image_base64" in data:
+        truncated = dict(data)
+        b64 = truncated.pop("image_base64")
+        truncated["image_base64"] = f"<{len(b64)} chars>"
+        truncated["image_bytes"] = len(b64) * 3 // 4
+        print(json.dumps(truncated, indent=2))
+    else:
+        print(json.dumps(data, indent=2))
+
+
+def p3(s):
+    parts = [float(x.strip()) for x in s.split(",")]
+    if len(parts) != 3:
+        sys.exit(f"Error: expected x,y,z but got '{s}'")
+    return parts
+
+
+# ── Commands ──────────────────────────────────────────────────
+
+def cmd_get(args):
+    out(call("/get_camera", {}))
+
+
+def cmd_set(args):
+    payload = {"smooth": not args.no_smooth}
+    if args.eye:
+        payload["eye"] = p3(args.eye)
+    if args.target:
+        payload["target"] = p3(args.target)
+    if args.up:
+        payload["up"] = p3(args.up)
+    if args.fov:
+        payload["perspective_angle"] = args.fov
+    if args.extents:
+        payload["view_extents"] = args.extents
+    out(call("/set_camera", payload))
+
+
+def cmd_view(args):
+    out(call("/set_view", {"preset": args.preset, "fit": not args.no_fit,
+                            "smooth": not args.no_smooth}))
+
+
+def cmd_fit(args):
+    out(call("/fit_view", {"smooth": not args.no_smooth}))
+
+
+def cmd_orbit(args):
+    out(call("/orbit", {"yaw": args.yaw, "pitch": args.pitch,
+                         "smooth": not args.no_smooth}))
+
+
+def cmd_zoom(args):
+    out(call("/zoom", {"factor": args.factor, "smooth": not args.no_smooth}))
+
+
+def cmd_pan(args):
+    out(call("/pan", {"offset": p3(args.offset), "smooth": not args.no_smooth}))
+
+
+def cmd_look_at(args):
+    payload = {"target": p3(args.target), "smooth": not args.no_smooth}
+    if args.distance:
+        payload["distance"] = args.distance
+    if args.elevation is not None:
+        payload["elevation"] = args.elevation
+    if args.azimuth is not None:
+        payload["azimuth"] = args.azimuth
+    out(call("/look_at", payload))
+
+
+def cmd_projection(args):
+    payload = {"type": args.type, "smooth": not args.no_smooth}
+    if args.fov:
+        payload["perspective_angle"] = args.fov
+    out(call("/set_projection", payload))
+
+
+def cmd_style(args):
+    out(call("/set_visual_style", {"style": args.style}))
+
+
+def cmd_screenshot(args):
+    payload = {"width": args.width, "height": args.height}
+    if args.view:
+        payload["view"] = args.view
+    if args.path:
+        payload["path"] = args.path
+    out(call("/take_screenshot", payload))
+
+
+def cmd_save(args):
+    payload = {"path": args.path, "width": args.width, "height": args.height}
+    if args.view:
+        payload["view"] = args.view
+    out(call("/screenshot_to_file", payload))
+
+
+def cmd_export(args):
+    payload = {"format": args.format, "path": args.path}
+    if args.refinement:
+        payload["options"] = {"refinement": args.refinement}
+    out(call("/export", payload))
+
+
+# ── Parser ────────────────────────────────────────────────────
+
+def build_parser():
+    parser = argparse.ArgumentParser(prog="fusion-camera",
+                                      description="Fusion 360 camera & viewport CLI")
+    sub = parser.add_subparsers(dest="command")
+
+    # Camera state
+    sub.add_parser("get", help="Get current camera state").set_defaults(func=cmd_get)
+
+    p = sub.add_parser("set", help="Set camera position directly")
+    p.add_argument("--eye", help="Camera position x,y,z in mm")
+    p.add_argument("--target", help="Look-at point x,y,z in mm")
+    p.add_argument("--up", help="Up vector x,y,z")
+    p.add_argument("--fov", type=float, help="Perspective FOV in degrees")
+    p.add_argument("--extents", type=float, help="Orthographic extents in mm")
+    p.add_argument("--no-smooth", action="store_true")
+    p.set_defaults(func=cmd_set)
+
+    # Preset views
+    p = sub.add_parser("view", help="Set preset view orientation")
+    p.add_argument("preset", choices=["top", "bottom", "front", "back", "left", "right",
+                                       "isometric", "iso_top_left", "iso_bottom_right", "iso_bottom_left"])
+    p.add_argument("--no-fit", action="store_true", help="Don't fit to geometry")
+    p.add_argument("--no-smooth", action="store_true")
+    p.set_defaults(func=cmd_view)
+
+    p = sub.add_parser("fit", help="Fit view to all geometry")
+    p.add_argument("--no-smooth", action="store_true")
+    p.set_defaults(func=cmd_fit)
+
+    # Camera movements
+    p = sub.add_parser("orbit", help="Orbit camera around target")
+    p.add_argument("--yaw", type=float, default=0, help="Horizontal rotation degrees (+ = right)")
+    p.add_argument("--pitch", type=float, default=0, help="Vertical rotation degrees (+ = up)")
+    p.add_argument("--no-smooth", action="store_true")
+    p.set_defaults(func=cmd_orbit)
+
+    p = sub.add_parser("zoom", help="Zoom in/out")
+    p.add_argument("--factor", type=float, default=1.5, help=">1 = zoom in, <1 = zoom out")
+    p.add_argument("--no-smooth", action="store_true")
+    p.set_defaults(func=cmd_zoom)
+
+    p = sub.add_parser("pan", help="Pan camera (move eye + target)")
+    p.add_argument("--offset", required=True, help="Offset x,y,z in mm")
+    p.add_argument("--no-smooth", action="store_true")
+    p.set_defaults(func=cmd_pan)
+
+    p = sub.add_parser("look-at", help="Point camera at a target")
+    p.add_argument("--target", required=True, help="Look-at point x,y,z in mm")
+    p.add_argument("--distance", type=float, help="Distance from target in mm")
+    p.add_argument("--elevation", type=float, help="Elevation angle in degrees")
+    p.add_argument("--azimuth", type=float, help="Azimuth angle in degrees")
+    p.add_argument("--no-smooth", action="store_true")
+    p.set_defaults(func=cmd_look_at)
+
+    # Projection & style
+    p = sub.add_parser("projection", help="Set perspective/orthographic")
+    p.add_argument("type", choices=["perspective", "orthographic"])
+    p.add_argument("--fov", type=float, help="Perspective FOV in degrees")
+    p.add_argument("--no-smooth", action="store_true")
+    p.set_defaults(func=cmd_projection)
+
+    p = sub.add_parser("style", help="Set visual style")
+    p.add_argument("style", choices=["shaded", "wireframe", "shaded_wireframe", "hidden_edges"])
+    p.set_defaults(func=cmd_style)
+
+    # Screenshot
+    p = sub.add_parser("screenshot", help="Take a screenshot (returns base64 or saves to file)")
+    p.add_argument("--view", help="Set view first: top, front, isometric, etc.")
+    p.add_argument("--width", type=int, default=1920)
+    p.add_argument("--height", type=int, default=1080)
+    p.add_argument("--path", help="Save to file instead of returning base64")
+    p.set_defaults(func=cmd_screenshot)
+
+    p = sub.add_parser("save", help="Save screenshot to a file")
+    p.add_argument("path", help="Output file path")
+    p.add_argument("--view", help="Set view first")
+    p.add_argument("--width", type=int, default=1920)
+    p.add_argument("--height", type=int, default=1080)
+    p.set_defaults(func=cmd_save)
+
+    # Export
+    p = sub.add_parser("export", help="Export design to file")
+    p.add_argument("format", choices=["stl", "step", "iges", "f3d"])
+    p.add_argument("path", help="Output file path")
+    p.add_argument("--refinement", choices=["low", "medium", "high"], help="STL mesh quality")
+    p.set_defaults(func=cmd_export)
+
+    return parser
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

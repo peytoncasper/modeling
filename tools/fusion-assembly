@@ -1,0 +1,384 @@
+#!/usr/bin/env python3
+"""CLI for Fusion 360 assembly / component / organization operations.
+
+Wraps the FusionMCPBridge HTTP API at localhost:8080.
+All coordinates/dimensions are in mm. All output is JSON.
+
+Examples — Components:
+    fusion-assembly list                        # list all components
+    fusion-assembly info --component Carcass    # detailed component info
+    fusion-assembly create --name Carcass       # create new component
+    fusion-assembly create --name Shelf --parent Carcass  # nested component
+    fusion-assembly delete --component Carcass  # delete a component
+    fusion-assembly rename --component Comp1 --new-name Carcass
+    fusion-assembly duplicate --component Leg --new-name Leg2
+
+Examples — Body Organization:
+    fusion-assembly rename-body --body Body1 --new-name TopPanel
+    fusion-assembly move-body --body TopPanel --to Carcass
+    fusion-assembly copy-body --body TopPanel --to Carcass --name TopPanel_Copy
+
+Examples — Visibility:
+    fusion-assembly show --component Carcass
+    fusion-assembly hide --component Carcass
+    fusion-assembly show-body --body TopPanel
+    fusion-assembly hide-body --body TopPanel
+
+Examples — Occurrence Transforms:
+    fusion-assembly move --component Leg --translate 100,0,0
+    fusion-assembly move --component Leg --rotate-axis 0,0,1 --rotate-angle 90
+    fusion-assembly ground --component Base
+    fusion-assembly unground --component Leg
+
+Examples — Joints:
+    fusion-assembly as-built-joint --comp1 Base --comp2 Leg --type rigid
+    fusion-assembly joints                      # list all joints
+    fusion-assembly delete-joint --name Joint1
+
+Examples — Query:
+    fusion-assembly context                     # full assembly snapshot
+    fusion-assembly transform --component Leg   # occurrence transform
+    fusion-assembly bodies --component Carcass  # all bodies in component
+"""
+
+import argparse
+import json
+import sys
+import urllib.request
+import urllib.error
+
+BRIDGE = "http://localhost:8080"
+
+
+def call(endpoint, body=None):
+    data = json.dumps(body or {}).encode()
+    req = urllib.request.Request(
+        f"{BRIDGE}{endpoint}", data=data,
+        headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.URLError as e:
+        return {"error": True, "message": f"Cannot connect to Fusion bridge: {e}"}
+    except Exception as e:
+        return {"error": True, "message": str(e)}
+
+
+def out(data):
+    print(json.dumps(data, indent=2))
+
+
+def p3(s):
+    """Parse 'x,y,z' into [x, y, z]."""
+    parts = [float(x.strip()) for x in s.split(",")]
+    if len(parts) != 3:
+        sys.exit(f"Error: expected x,y,z but got '{s}'")
+    return parts
+
+
+# ── Component Management ──────────────────────────────────────
+
+def cmd_list(args):
+    out(call("/list_components", {}))
+
+
+def cmd_info(args):
+    out(call("/get_component_info", {"component": args.component}))
+
+
+def cmd_create(args):
+    payload = {"name": args.name}
+    if args.parent:
+        payload["parent"] = args.parent
+    out(call("/create_component", payload))
+
+
+def cmd_delete(args):
+    out(call("/delete_component", {"component": args.component}))
+
+
+def cmd_rename(args):
+    out(call("/rename_component", {"component": args.component, "new_name": args.new_name}))
+
+
+def cmd_duplicate(args):
+    payload = {"component": args.component}
+    if args.new_name:
+        payload["new_name"] = args.new_name
+    out(call("/duplicate_component", payload))
+
+
+# ── Body Organization ────────────────────────────────────────
+
+def cmd_rename_body(args):
+    payload = {"body_name": args.body, "new_name": args.new_name}
+    if args.component:
+        payload["component"] = args.component
+    out(call("/rename_body", payload))
+
+
+def cmd_move_body(args):
+    payload = {"body_name": args.body, "target_component": args.to}
+    if args.source:
+        payload["source_component"] = args.source
+    out(call("/move_body_to_component", payload))
+
+
+def cmd_copy_body(args):
+    payload = {"body_name": args.body, "target_component": args.to}
+    if args.name:
+        payload["new_name"] = args.name
+    out(call("/copy_body_to_component", payload))
+
+
+# ── Visibility ────────────────────────────────────────────────
+
+def cmd_show_component(args):
+    out(call("/set_component_visibility", {"component": args.component, "visible": True}))
+
+
+def cmd_hide_component(args):
+    out(call("/set_component_visibility", {"component": args.component, "visible": False}))
+
+
+def cmd_show_body(args):
+    payload = {"body_name": args.body, "visible": True}
+    if args.component:
+        payload["component"] = args.component
+    out(call("/set_body_visibility", payload))
+
+
+def cmd_hide_body(args):
+    payload = {"body_name": args.body, "visible": False}
+    if args.component:
+        payload["component"] = args.component
+    out(call("/set_body_visibility", payload))
+
+
+# ── Occurrence Transforms ─────────────────────────────────────
+
+def cmd_move_occurrence(args):
+    payload = {"component": args.component}
+    if args.translate:
+        payload["translation"] = p3(args.translate)
+    if args.rotate_axis and args.rotate_angle is not None:
+        rot = {"axis": [float(x) for x in args.rotate_axis.split(",")],
+               "angle": args.rotate_angle}
+        if args.rotate_origin:
+            rot["origin"] = p3(args.rotate_origin)
+        payload["rotation"] = rot
+    out(call("/move_occurrence", payload))
+
+
+def cmd_ground(args):
+    out(call("/ground_component", {"component": args.component, "grounded": True}))
+
+
+def cmd_unground(args):
+    out(call("/ground_component", {"component": args.component, "grounded": False}))
+
+
+# ── Joints ────────────────────────────────────────────────────
+
+def cmd_as_built_joint(args):
+    payload = {"component1": args.comp1, "component2": args.comp2,
+               "joint_type": args.type}
+    if args.name:
+        payload["name"] = args.name
+    out(call("/create_as_built_joint", payload))
+
+
+def cmd_create_joint(args):
+    geo1 = {"type": args.geo1_type}
+    if args.geo1_component:
+        geo1["component"] = args.geo1_component
+    if args.geo1_point:
+        geo1["point"] = p3(args.geo1_point)
+    if args.geo1_body:
+        geo1["body"] = args.geo1_body
+
+    geo2 = {"type": args.geo2_type}
+    if args.geo2_component:
+        geo2["component"] = args.geo2_component
+    if args.geo2_point:
+        geo2["point"] = p3(args.geo2_point)
+    if args.geo2_body:
+        geo2["body"] = args.geo2_body
+
+    payload = {"geometry1": geo1, "geometry2": geo2, "joint_type": args.type}
+    if args.name:
+        payload["name"] = args.name
+    out(call("/create_joint", payload))
+
+
+def cmd_list_joints(args):
+    out(call("/list_joints", {}))
+
+
+def cmd_delete_joint(args):
+    out(call("/delete_joint", {"joint_name": args.name}))
+
+
+# ── Assembly Query ────────────────────────────────────────────
+
+def cmd_context(args):
+    out(call("/get_assembly_context", {}))
+
+
+def cmd_transform(args):
+    out(call("/get_occurrence_transform", {"component": args.component}))
+
+
+def cmd_bodies(args):
+    payload = {"component": args.component,
+               "include_children": not args.no_children}
+    out(call("/find_component_bodies", payload))
+
+
+# ── argparse setup ────────────────────────────────────────────
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        prog="fusion-assembly",
+        description="Fusion 360 assembly / component / organization CLI")
+    sub = parser.add_subparsers(dest="command")
+
+    # Component Management
+    p = sub.add_parser("list", help="List all components")
+    p.set_defaults(func=cmd_list)
+
+    p = sub.add_parser("info", help="Get detailed component info")
+    p.add_argument("--component", required=True)
+    p.set_defaults(func=cmd_info)
+
+    p = sub.add_parser("create", help="Create a new component")
+    p.add_argument("--name", required=True)
+    p.add_argument("--parent", help="Parent component name")
+    p.set_defaults(func=cmd_create)
+
+    p = sub.add_parser("delete", help="Delete a component")
+    p.add_argument("--component", required=True)
+    p.set_defaults(func=cmd_delete)
+
+    p = sub.add_parser("rename", help="Rename a component")
+    p.add_argument("--component", required=True)
+    p.add_argument("--new-name", required=True)
+    p.set_defaults(func=cmd_rename)
+
+    p = sub.add_parser("duplicate", help="Duplicate a component occurrence")
+    p.add_argument("--component", required=True)
+    p.add_argument("--new-name")
+    p.set_defaults(func=cmd_duplicate)
+
+    # Body Organization
+    p = sub.add_parser("rename-body", help="Rename a body")
+    p.add_argument("--body", required=True)
+    p.add_argument("--new-name", required=True)
+    p.add_argument("--component", help="Component to search in")
+    p.set_defaults(func=cmd_rename_body)
+
+    p = sub.add_parser("move-body", help="Move a body to another component")
+    p.add_argument("--body", required=True)
+    p.add_argument("--to", required=True, help="Target component name")
+    p.add_argument("--source", help="Source component name")
+    p.set_defaults(func=cmd_move_body)
+
+    p = sub.add_parser("copy-body", help="Copy a body to another component")
+    p.add_argument("--body", required=True)
+    p.add_argument("--to", required=True, help="Target component name")
+    p.add_argument("--name", help="Name for the copy")
+    p.set_defaults(func=cmd_copy_body)
+
+    # Visibility
+    p = sub.add_parser("show", help="Show a component")
+    p.add_argument("--component", required=True)
+    p.set_defaults(func=cmd_show_component)
+
+    p = sub.add_parser("hide", help="Hide a component")
+    p.add_argument("--component", required=True)
+    p.set_defaults(func=cmd_hide_component)
+
+    p = sub.add_parser("show-body", help="Show a body")
+    p.add_argument("--body", required=True)
+    p.add_argument("--component")
+    p.set_defaults(func=cmd_show_body)
+
+    p = sub.add_parser("hide-body", help="Hide a body")
+    p.add_argument("--body", required=True)
+    p.add_argument("--component")
+    p.set_defaults(func=cmd_hide_body)
+
+    # Occurrence Transforms
+    p = sub.add_parser("move", help="Move/rotate a component occurrence")
+    p.add_argument("--component", required=True)
+    p.add_argument("--translate", help="Translation x,y,z in mm")
+    p.add_argument("--rotate-axis", help="Rotation axis x,y,z")
+    p.add_argument("--rotate-angle", type=float, help="Rotation angle in degrees")
+    p.add_argument("--rotate-origin", help="Rotation origin x,y,z")
+    p.set_defaults(func=cmd_move_occurrence)
+
+    p = sub.add_parser("ground", help="Ground (lock) a component")
+    p.add_argument("--component", required=True)
+    p.set_defaults(func=cmd_ground)
+
+    p = sub.add_parser("unground", help="Unground (unlock) a component")
+    p.add_argument("--component", required=True)
+    p.set_defaults(func=cmd_unground)
+
+    # Joints
+    p = sub.add_parser("as-built-joint", help="Create an as-built joint (preserves positions)")
+    p.add_argument("--comp1", required=True, help="First component")
+    p.add_argument("--comp2", required=True, help="Second component")
+    p.add_argument("--type", default="rigid",
+                   choices=["rigid", "revolute", "slider", "cylindrical", "pin_slot", "planar", "ball"])
+    p.add_argument("--name")
+    p.set_defaults(func=cmd_as_built_joint)
+
+    p = sub.add_parser("joint", help="Create a joint between two components")
+    p.add_argument("--geo1-type", required=True, choices=["origin", "point", "body_center"])
+    p.add_argument("--geo1-component")
+    p.add_argument("--geo1-point", help="x,y,z for point type")
+    p.add_argument("--geo1-body", help="Body name for body_center type")
+    p.add_argument("--geo2-type", required=True, choices=["origin", "point", "body_center"])
+    p.add_argument("--geo2-component")
+    p.add_argument("--geo2-point", help="x,y,z for point type")
+    p.add_argument("--geo2-body", help="Body name for body_center type")
+    p.add_argument("--type", default="rigid",
+                   choices=["rigid", "revolute", "slider", "cylindrical", "pin_slot", "planar", "ball"])
+    p.add_argument("--name")
+    p.set_defaults(func=cmd_create_joint)
+
+    p = sub.add_parser("joints", help="List all joints")
+    p.set_defaults(func=cmd_list_joints)
+
+    p = sub.add_parser("delete-joint", help="Delete a joint")
+    p.add_argument("--name", required=True)
+    p.set_defaults(func=cmd_delete_joint)
+
+    # Assembly Query
+    p = sub.add_parser("context", help="Get full assembly context snapshot")
+    p.set_defaults(func=cmd_context)
+
+    p = sub.add_parser("transform", help="Get a component's position/transform")
+    p.add_argument("--component", required=True)
+    p.set_defaults(func=cmd_transform)
+
+    p = sub.add_parser("bodies", help="List all bodies in a component")
+    p.add_argument("--component", required=True)
+    p.add_argument("--no-children", action="store_true", help="Exclude child component bodies")
+    p.set_defaults(func=cmd_bodies)
+
+    return parser
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

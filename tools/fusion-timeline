@@ -1,0 +1,410 @@
+#!/usr/bin/env python3
+"""CLI for Fusion 360 parametric timeline operations.
+
+Wraps the FusionMCPBridge HTTP API at localhost:8080.
+Full read/write/navigate access to the feature timeline.
+
+Examples — Query:
+    fusion-timeline list                           # all items with marker position
+    fusion-timeline list --active                  # skip suppressed features
+    fusion-timeline list --start 5 --limit 10      # paginate
+    fusion-timeline item Extrude1                  # detail for one feature
+    fusion-timeline item --index 3                 # by index
+    fusion-timeline marker                         # current marker position
+    fusion-timeline count                          # quick count
+    fusion-timeline search --query extrude         # find by name substring
+    fusion-timeline search --type Sketch           # find by type
+    fusion-timeline health                         # feature health report
+    fusion-timeline params Extrude1                # feature parameters
+
+Examples — Navigate:
+    fusion-timeline roll Extrude1                  # roll to before a feature
+    fusion-timeline roll --index 5                 # roll to before index 5
+    fusion-timeline roll Extrude1 --after          # roll to after the feature
+    fusion-timeline roll-end                       # roll to end (show all)
+    fusion-timeline roll-beginning                 # roll to beginning (hide all)
+
+Examples — Modify:
+    fusion-timeline suppress Extrude1              # suppress a feature
+    fusion-timeline suppress --names Extrude1,Fillet1  # suppress multiple
+    fusion-timeline unsuppress Extrude1            # unsuppress a feature
+    fusion-timeline delete Extrude1                # delete a feature
+    fusion-timeline delete --index 3               # delete by index
+    fusion-timeline move Extrude1 --to 0           # move to beginning
+    fusion-timeline edit-param Extrude1 --param distance --expr "20 mm"
+    fusion-timeline edit-param Extrude1 --param distance --value 25
+    fusion-timeline rename Extrude1 --new-name BaseExtrude
+    fusion-timeline undo                           # delete last feature
+    fusion-timeline redo                           # unsuppress last suppressed
+
+Examples — Groups:
+    fusion-timeline group --start 0 --end 3        # group items 0-3
+    fusion-timeline collapse MyGroup               # collapse a group
+    fusion-timeline expand MyGroup                 # expand a group
+
+Examples — Analysis:
+    fusion-timeline deps Extrude1                  # upstream/downstream deps
+"""
+
+import argparse
+import json
+import sys
+import urllib.request
+import urllib.error
+
+BRIDGE = "http://localhost:8080"
+
+
+def call(endpoint, body=None):
+    data = json.dumps(body or {}).encode()
+    req = urllib.request.Request(
+        f"{BRIDGE}{endpoint}", data=data,
+        headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.URLError as e:
+        return {"error": True, "message": f"Cannot connect to Fusion bridge: {e}"}
+    except Exception as e:
+        return {"error": True, "message": str(e)}
+
+
+def out(data):
+    print(json.dumps(data, indent=2))
+
+
+# ── Commands ──────────────────────────────────────────────────
+
+def cmd_list(args):
+    body = {}
+    if args.active:
+        body["include_suppressed"] = False
+    if args.start is not None:
+        body["start"] = args.start
+    if args.limit is not None:
+        body["limit"] = args.limit
+    out(call("/timeline_list", body))
+
+
+def cmd_item(args):
+    body = {}
+    if args.name:
+        body["name"] = args.name
+    if args.index is not None:
+        body["index"] = args.index
+    out(call("/timeline_item", body))
+
+
+def cmd_marker(args):
+    out(call("/timeline_marker"))
+
+
+def cmd_count(args):
+    out(call("/timeline_count"))
+
+
+def cmd_search(args):
+    body = {}
+    if args.query:
+        body["query"] = args.query
+    if args.type:
+        body["type"] = args.type
+    out(call("/timeline_search", body))
+
+
+def cmd_health(args):
+    out(call("/timeline_health"))
+
+
+def cmd_params(args):
+    body = {}
+    if args.name:
+        body["name"] = args.name
+    if args.index is not None:
+        body["index"] = args.index
+    out(call("/timeline_feature_params", body))
+
+
+def cmd_roll(args):
+    body = {"before": not args.after}
+    if args.name:
+        body["name"] = args.name
+    if args.index is not None:
+        body["index"] = args.index
+    out(call("/timeline_roll_to", body))
+
+
+def cmd_roll_end(args):
+    out(call("/timeline_roll_end"))
+
+
+def cmd_roll_beginning(args):
+    out(call("/timeline_roll_beginning"))
+
+
+def cmd_suppress(args):
+    body = {}
+    if args.name:
+        body["name"] = args.name
+    if args.index is not None:
+        body["index"] = args.index
+    if args.names:
+        body["names"] = [n.strip() for n in args.names.split(",")]
+    if args.indices:
+        body["indices"] = [int(i.strip()) for i in args.indices.split(",")]
+    out(call("/timeline_suppress", body))
+
+
+def cmd_unsuppress(args):
+    body = {}
+    if args.name:
+        body["name"] = args.name
+    if args.index is not None:
+        body["index"] = args.index
+    if args.names:
+        body["names"] = [n.strip() for n in args.names.split(",")]
+    if args.indices:
+        body["indices"] = [int(i.strip()) for i in args.indices.split(",")]
+    out(call("/timeline_unsuppress", body))
+
+
+def cmd_delete(args):
+    body = {}
+    if args.name:
+        body["name"] = args.name
+    if args.index is not None:
+        body["index"] = args.index
+    out(call("/timeline_delete", body))
+
+
+def cmd_move(args):
+    body = {"to_index": args.to}
+    if args.name:
+        body["name"] = args.name
+    if args.index is not None:
+        body["index"] = args.index
+    out(call("/timeline_move", body))
+
+
+def cmd_edit_param(args):
+    body = {}
+    if args.name:
+        body["name"] = args.name
+    if args.index is not None:
+        body["index"] = args.index
+    body["parameter_name"] = args.param
+    if args.expr:
+        body["expression"] = args.expr
+    if args.value is not None:
+        body["value"] = args.value
+    out(call("/timeline_edit_param", body))
+
+
+def cmd_rename(args):
+    body = {"new_name": args.new_name}
+    if args.name:
+        body["name"] = args.name
+    if args.index is not None:
+        body["index"] = args.index
+    out(call("/timeline_rename", body))
+
+
+def cmd_undo(args):
+    out(call("/timeline_undo"))
+
+
+def cmd_redo(args):
+    out(call("/timeline_redo"))
+
+
+def cmd_group(args):
+    out(call("/timeline_create_group", {
+        "start_index": args.start,
+        "end_index": args.end,
+    }))
+
+
+def cmd_collapse(args):
+    body = {}
+    if args.name:
+        body["name"] = args.name
+    if args.index is not None:
+        body["index"] = args.index
+    out(call("/timeline_collapse_group", body))
+
+
+def cmd_expand(args):
+    body = {}
+    if args.name:
+        body["name"] = args.name
+    if args.index is not None:
+        body["index"] = args.index
+    out(call("/timeline_expand_group", body))
+
+
+def cmd_deps(args):
+    body = {}
+    if args.name:
+        body["name"] = args.name
+    if args.index is not None:
+        body["index"] = args.index
+    out(call("/timeline_deps", body))
+
+
+# ── Argument parser ──────────────────────────────────────────
+
+def build_parser():
+    p = argparse.ArgumentParser(
+        prog="fusion-timeline",
+        description="Fusion 360 parametric timeline CLI")
+    sub = p.add_subparsers(dest="command", required=True)
+
+    # list
+    sp = sub.add_parser("list", help="List all timeline items")
+    sp.add_argument("--active", action="store_true", help="Exclude suppressed features")
+    sp.add_argument("--start", type=int, help="Start index for pagination")
+    sp.add_argument("--limit", type=int, help="Max items to return")
+
+    # item
+    sp = sub.add_parser("item", help="Get details for a single timeline item")
+    sp.add_argument("name", nargs="?", help="Feature name")
+    sp.add_argument("--index", type=int, help="Feature index")
+
+    # marker
+    sub.add_parser("marker", help="Get current marker position")
+
+    # count
+    sub.add_parser("count", help="Quick timeline count")
+
+    # search
+    sp = sub.add_parser("search", help="Search timeline by name/type")
+    sp.add_argument("--query", "-q", help="Name substring to match")
+    sp.add_argument("--type", "-t", help="Type substring to match (e.g. Sketch, Extrude)")
+
+    # health
+    sub.add_parser("health", help="Feature health report")
+
+    # params
+    sp = sub.add_parser("params", help="Get feature parameters")
+    sp.add_argument("name", nargs="?", help="Feature name")
+    sp.add_argument("--index", type=int, help="Feature index")
+
+    # roll
+    sp = sub.add_parser("roll", help="Roll marker to a feature")
+    sp.add_argument("name", nargs="?", help="Feature name")
+    sp.add_argument("--index", type=int, help="Feature index")
+    sp.add_argument("--after", action="store_true",
+                     help="Roll to after the feature (default: before)")
+
+    # roll-end
+    sub.add_parser("roll-end", help="Roll marker to end (show all features)")
+
+    # roll-beginning
+    sub.add_parser("roll-beginning", help="Roll marker to beginning (hide all features)")
+
+    # suppress
+    sp = sub.add_parser("suppress", help="Suppress feature(s)")
+    sp.add_argument("name", nargs="?", help="Feature name")
+    sp.add_argument("--index", type=int, help="Feature index")
+    sp.add_argument("--names", help="Comma-separated feature names")
+    sp.add_argument("--indices", help="Comma-separated feature indices")
+
+    # unsuppress
+    sp = sub.add_parser("unsuppress", help="Unsuppress feature(s)")
+    sp.add_argument("name", nargs="?", help="Feature name")
+    sp.add_argument("--index", type=int, help="Feature index")
+    sp.add_argument("--names", help="Comma-separated feature names")
+    sp.add_argument("--indices", help="Comma-separated feature indices")
+
+    # delete
+    sp = sub.add_parser("delete", help="Delete a feature")
+    sp.add_argument("name", nargs="?", help="Feature name")
+    sp.add_argument("--index", type=int, help="Feature index")
+
+    # move
+    sp = sub.add_parser("move", help="Reorder a feature")
+    sp.add_argument("name", nargs="?", help="Feature name")
+    sp.add_argument("--index", type=int, help="Current feature index")
+    sp.add_argument("--to", type=int, required=True, help="Target index")
+
+    # edit-param
+    sp = sub.add_parser("edit-param", help="Edit a feature parameter")
+    sp.add_argument("name", nargs="?", help="Feature name")
+    sp.add_argument("--index", type=int, help="Feature index")
+    sp.add_argument("--param", default="distance", help="Parameter name (default: distance)")
+    sp.add_argument("--expr", help="Parameter expression (e.g. '20 mm')")
+    sp.add_argument("--value", type=float, help="Parameter value in mm")
+
+    # rename
+    sp = sub.add_parser("rename", help="Rename a timeline item")
+    sp.add_argument("name", nargs="?", help="Current feature name")
+    sp.add_argument("--index", type=int, help="Feature index")
+    sp.add_argument("--new-name", required=True, help="New name")
+
+    # undo
+    sub.add_parser("undo", help="Delete the last unsuppressed feature")
+
+    # redo
+    sub.add_parser("redo", help="Unsuppress the last suppressed feature")
+
+    # group
+    sp = sub.add_parser("group", help="Create a timeline group")
+    sp.add_argument("--start", type=int, required=True, help="Start index")
+    sp.add_argument("--end", type=int, required=True, help="End index (inclusive)")
+
+    # collapse
+    sp = sub.add_parser("collapse", help="Collapse a timeline group")
+    sp.add_argument("name", nargs="?", help="Group name")
+    sp.add_argument("--index", type=int, help="Group index")
+
+    # expand
+    sp = sub.add_parser("expand", help="Expand a timeline group")
+    sp.add_argument("name", nargs="?", help="Group name")
+    sp.add_argument("--index", type=int, help="Group index")
+
+    # deps
+    sp = sub.add_parser("deps", help="Feature dependencies (upstream/downstream)")
+    sp.add_argument("name", nargs="?", help="Feature name")
+    sp.add_argument("--index", type=int, help="Feature index")
+
+    return p
+
+
+DISPATCH = {
+    "list": cmd_list,
+    "item": cmd_item,
+    "marker": cmd_marker,
+    "count": cmd_count,
+    "search": cmd_search,
+    "health": cmd_health,
+    "params": cmd_params,
+    "roll": cmd_roll,
+    "roll-end": cmd_roll_end,
+    "roll-beginning": cmd_roll_beginning,
+    "suppress": cmd_suppress,
+    "unsuppress": cmd_unsuppress,
+    "delete": cmd_delete,
+    "move": cmd_move,
+    "edit-param": cmd_edit_param,
+    "rename": cmd_rename,
+    "undo": cmd_undo,
+    "redo": cmd_redo,
+    "group": cmd_group,
+    "collapse": cmd_collapse,
+    "expand": cmd_expand,
+    "deps": cmd_deps,
+}
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+    fn = DISPATCH.get(args.command)
+    if fn:
+        fn(args)
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()

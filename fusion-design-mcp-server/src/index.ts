@@ -856,7 +856,7 @@ Returns is_solid=true and watertight=true when the surfaces fully enclose a volu
   // ============ Component Management ============
   {
     name: "fusion_list_components",
-    description: "List all components in the design with hierarchy information. Returns component tree structure, body counts, sketch counts, and child relationships.",
+    description: "List all components in the design with hierarchy information. Returns component tree structure, body counts, sketch counts, visibility, and child relationships.",
     inputSchema: {
       type: "object" as const,
       properties: {},
@@ -865,7 +865,7 @@ Returns is_solid=true and watertight=true when the surfaces fully enclose a volu
   },
   {
     name: "fusion_get_component_info",
-    description: "Get detailed information about a specific component including all bodies, sketches, construction planes, and child occurrences.",
+    description: "Get detailed information about a specific component including all bodies, sketches, construction planes, child occurrences, visibility, and grounding state.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -893,6 +893,248 @@ Returns is_solid=true and watertight=true when the surfaces fully enclose a volu
       type: "object" as const,
       properties: {
         component: { type: "string", description: "Component name to delete (e.g., 'Carcass' or 'Carcass:1')" },
+      },
+      required: ["component"],
+    },
+  },
+  {
+    name: "fusion_rename_component",
+    description: "Rename a component. Works for root component and child components.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        component: { type: "string", description: "Current component name" },
+        new_name: { type: "string", description: "New name for the component" },
+      },
+      required: ["component", "new_name"],
+    },
+  },
+  {
+    name: "fusion_duplicate_component",
+    description: "Create a copy of an existing component as a new occurrence. The copy shares the same component definition (linked). Useful for creating multiple instances of the same part.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        component: { type: "string", description: "Component name to duplicate" },
+        new_name: { type: "string", description: "Optional new name for the copy" },
+      },
+      required: ["component"],
+    },
+  },
+
+  // ============ Body Organization ============
+  {
+    name: "fusion_rename_body",
+    description: "Rename a body. Useful for giving bodies descriptive names after creation.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        body_name: { type: "string", description: "Current body name" },
+        new_name: { type: "string", description: "New name for the body" },
+        component: { type: "string", description: "Optional component to search in" },
+      },
+      required: ["body_name", "new_name"],
+    },
+  },
+  {
+    name: "fusion_move_body_to_component",
+    description: "Move a body from its current component into a different component. The body is removed from the source and added to the target. Essential for organizing bodies into logical component groups.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        body_name: { type: "string", description: "Name of the body to move" },
+        target_component: { type: "string", description: "Destination component name" },
+        source_component: { type: "string", description: "Optional source component name (searches all if omitted)" },
+      },
+      required: ["body_name", "target_component"],
+    },
+  },
+  {
+    name: "fusion_copy_body_to_component",
+    description: "Copy a body into a different component. The original body remains in place. Useful for creating reference geometry in other components.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        body_name: { type: "string", description: "Name of the body to copy" },
+        target_component: { type: "string", description: "Destination component name" },
+        new_name: { type: "string", description: "Optional name for the copied body" },
+      },
+      required: ["body_name", "target_component"],
+    },
+  },
+
+  // ============ Visibility ============
+  {
+    name: "fusion_set_component_visibility",
+    description: "Show or hide a component occurrence (light-bulb toggle). Hiding a component hides all its bodies and child components.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        component: { type: "string", description: "Component name" },
+        visible: { type: "boolean", description: "true to show, false to hide" },
+      },
+      required: ["component", "visible"],
+    },
+  },
+  {
+    name: "fusion_set_body_visibility",
+    description: "Show or hide an individual body (light-bulb toggle).",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        body_name: { type: "string", description: "Body name" },
+        visible: { type: "boolean", description: "true to show, false to hide" },
+        component: { type: "string", description: "Optional component to search in" },
+      },
+      required: ["body_name", "visible"],
+    },
+  },
+
+  // ============ Occurrence Transforms ============
+  {
+    name: "fusion_move_occurrence",
+    description: "Translate and/or rotate a component occurrence in the assembly. Moves all bodies within the component as a unit.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        component: { type: "string", description: "Component name to move" },
+        translation: { type: "array", items: { type: "number" }, description: "[x, y, z] translation in mm" },
+        rotation: {
+          type: "object",
+          properties: {
+            axis: { type: "array", items: { type: "number" }, description: "Rotation axis [x, y, z]" },
+            angle: { type: "number", description: "Angle in degrees" },
+            origin: { type: "array", items: { type: "number" }, description: "Rotation origin [x, y, z] in mm" },
+          },
+          description: "Rotation specification",
+        },
+      },
+      required: ["component"],
+    },
+  },
+  {
+    name: "fusion_ground_component",
+    description: "Ground (lock) or unground a component occurrence. Grounded components cannot be moved by joints or dragging.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        component: { type: "string", description: "Component name" },
+        grounded: { type: "boolean", description: "true to ground, false to unground (default: true)" },
+      },
+      required: ["component"],
+    },
+  },
+
+  // ============ Joints ============
+  {
+    name: "fusion_create_joint",
+    description: `Create an assembly joint between two components. Joints define how components can move relative to each other.
+
+Joint types:
+- rigid: No relative motion (fixed together)
+- revolute: Rotation around one axis (hinges, pivots)
+- slider: Translation along one axis (drawer slides)
+- cylindrical: Rotation + translation along one axis
+- pin_slot: Rotation + translation along different axes
+- planar: Translation in a plane + rotation around normal
+- ball: Rotation around all three axes
+
+Each geometry spec requires a type and component:
+- origin: Uses the component's origin point
+- point: Uses explicit [x,y,z] coordinates`,
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        geometry1: {
+          type: "object",
+          properties: {
+            type: { type: "string", enum: ["origin", "point", "body_center"], description: "Geometry reference type" },
+            component: { type: "string", description: "Component name" },
+            point: { type: "array", items: { type: "number" }, description: "[x,y,z] for point type" },
+            body: { type: "string", description: "Body name for body_center type" },
+          },
+          description: "First joint geometry",
+        },
+        geometry2: {
+          type: "object",
+          properties: {
+            type: { type: "string", enum: ["origin", "point", "body_center"], description: "Geometry reference type" },
+            component: { type: "string", description: "Component name" },
+            point: { type: "array", items: { type: "number" }, description: "[x,y,z] for point type" },
+            body: { type: "string", description: "Body name for body_center type" },
+          },
+          description: "Second joint geometry",
+        },
+        joint_type: { type: "string", enum: ["rigid", "revolute", "slider", "cylindrical", "pin_slot", "planar", "ball"], description: "Type of joint (default: rigid)" },
+        name: { type: "string", description: "Optional joint name" },
+      },
+      required: ["geometry1", "geometry2"],
+    },
+  },
+  {
+    name: "fusion_create_as_built_joint",
+    description: "Create an as-built joint between two components that preserves their current positions. Much simpler than regular joints — just specify the two components and joint type. The components stay exactly where they are.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        component1: { type: "string", description: "First component name" },
+        component2: { type: "string", description: "Second component name" },
+        joint_type: { type: "string", enum: ["rigid", "revolute", "slider", "cylindrical", "pin_slot", "planar", "ball"], description: "Type of joint (default: rigid)" },
+        name: { type: "string", description: "Optional joint name" },
+      },
+      required: ["component1", "component2"],
+    },
+  },
+  {
+    name: "fusion_list_joints",
+    description: "List all joints and as-built joints in the design with their types, connected components, and suppression state.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "fusion_delete_joint",
+    description: "Delete a joint by name.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        joint_name: { type: "string", description: "Name of the joint to delete" },
+      },
+      required: ["joint_name"],
+    },
+  },
+
+  // ============ Assembly Query ============
+  {
+    name: "fusion_get_assembly_context",
+    description: "Get a comprehensive assembly state snapshot: all components with positions, visibility, grounding, bodies, plus all joints. Call this to understand the full assembly structure.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "fusion_get_occurrence_transform",
+    description: "Get the position, rotation matrix, and grounding state of a component occurrence. Returns the 4x4 transform matrix and translation in mm.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        component: { type: "string", description: "Component name" },
+      },
+      required: ["component"],
+    },
+  },
+  {
+    name: "fusion_find_component_bodies",
+    description: "List all bodies in a component, optionally including child components. Returns body names, volumes, visibility, and bounding boxes.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        component: { type: "string", description: "Component name" },
+        include_children: { type: "boolean", description: "Include bodies from child components (default: true)" },
       },
       required: ["component"],
     },
@@ -1243,6 +1485,113 @@ Returns is_solid=true and watertight=true when the surfaces fully enclose a volu
       required: ["parent_frame", "name", "origin", "normal"]
     }
   },
+
+  // ============ CAD Navigation State ============
+  {
+    name: "fusion_get_state",
+    description:
+      "Get the compact CAD navigation state. Returns current focus (what you're editing), " +
+      "selection, timeline position, active frame, and user parameters. " +
+      "Call this at the start of each turn to understand context.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        sparse: {
+          type: "boolean",
+          description: "Omit null/empty fields to save tokens (default false)",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "fusion_get_state_compact",
+    description:
+      "Get a single-line nav string — the most token-efficient representation of " +
+      "current CAD state. Use when context window is tight.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "fusion_get_local_graph",
+    description:
+      "Get the entity neighborhood graph around the current focus or a specific entity. " +
+      "For sketches: points, lines, arcs, constraints, dimensions, profiles. " +
+      "For bodies: faces (with normals), edges, bounds. " +
+      "For features: timeline dependencies and affected bodies. " +
+      "For faces/edges: adjacent topology. " +
+      'Set focus_kind to "auto" to detect from current selection.',
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        focus_kind: {
+          type: "string",
+          enum: ["sketch", "body", "face", "edge", "feature", "auto", "none"],
+          description: 'Entity type to graph around (default "auto")',
+        },
+        focus_id: {
+          type: "string",
+          description: "Entity id (sketch name, body name, face_id, etc). Auto-detected if omitted.",
+        },
+        depth: {
+          type: "number",
+          description: "1 = immediate neighbors (default), 2 = neighbors of neighbors",
+        },
+        component: {
+          type: "string",
+          description: "Scope search to a specific component",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "fusion_get_patches_since",
+    description:
+      "Get state change patches since a given tick. Returns only what changed " +
+      "since your last STATE read. Use to catch up without re-reading full state.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        since_t: {
+          type: "number",
+          description: "Tick number from your last STATE read. Returns patches with t > since_t.",
+        },
+      },
+      required: ["since_t"],
+    },
+  },
+  {
+    name: "fusion_apply_action",
+    description:
+      "Execute a structured high-level CAD action. Translates intent into Fusion operations " +
+      "and returns resulting state patches. Available ops: " +
+      "sketch.create, sketch.add_rectangle, sketch.add_line, sketch.add_circle, sketch.finish, " +
+      "feature.extrude, feature.fillet, feature.chamfer, feature.boolean, " +
+      "param.set, param.create, timeline.roll, body.move, view.set, view.screenshot",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        action: {
+          type: "object",
+          description:
+            'Action object with fields: op (string), ctx (optional context like {sketch: "Sketch1"}), ' +
+            "args (operation arguments), expect (optional expected outcome)",
+          properties: {
+            op: { type: "string", description: "Operation name" },
+            ctx: { type: "object", description: "Context (e.g. active sketch)" },
+            args: { type: "object", description: "Operation arguments" },
+            expect: { type: "object", description: "Expected outcome for validation" },
+          },
+          required: ["op"],
+        },
+      },
+      required: ["action"],
+    },
+  },
 ];
 
 // Endpoint mapping
@@ -1306,6 +1655,27 @@ const ENDPOINTS: Record<string, string> = {
   fusion_get_component_info: "/get_component_info",
   fusion_create_component: "/create_component",
   fusion_delete_component: "/delete_component",
+  fusion_rename_component: "/rename_component",
+  fusion_duplicate_component: "/duplicate_component",
+  // Body Organization
+  fusion_rename_body: "/rename_body",
+  fusion_move_body_to_component: "/move_body_to_component",
+  fusion_copy_body_to_component: "/copy_body_to_component",
+  // Visibility
+  fusion_set_component_visibility: "/set_component_visibility",
+  fusion_set_body_visibility: "/set_body_visibility",
+  // Occurrence Transforms
+  fusion_move_occurrence: "/move_occurrence",
+  fusion_ground_component: "/ground_component",
+  // Joints
+  fusion_create_joint: "/create_joint",
+  fusion_create_as_built_joint: "/create_as_built_joint",
+  fusion_list_joints: "/list_joints",
+  fusion_delete_joint: "/delete_joint",
+  // Assembly Query
+  fusion_get_assembly_context: "/get_assembly_context",
+  fusion_get_occurrence_transform: "/get_occurrence_transform",
+  fusion_find_component_bodies: "/find_component_bodies",
   fusion_copy_body: "/copy_body",
   fusion_move_body: "/move_body",
   fusion_mirror_body: "/mirror_body",
@@ -1334,6 +1704,12 @@ const ENDPOINTS: Record<string, string> = {
   fusion_transform_point: "/transform_point",
   fusion_create_body_frame: "/create_body_frame",
   fusion_create_interface_frame: "/create_interface_frame",
+  // CAD Navigation State
+  fusion_get_state: "/get_state",
+  fusion_get_state_compact: "/get_state_compact",
+  fusion_get_local_graph: "/get_local_graph",
+  fusion_get_patches_since: "/get_patches_since",
+  fusion_apply_action: "/apply_action",
 };
 
 // List available tools

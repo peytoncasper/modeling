@@ -1,0 +1,650 @@
+#!/usr/bin/env python3
+"""CLI for Fusion 360 solid/body operations — complete coverage.
+
+Wraps the FusionMCPBridge HTTP API at localhost:8080.
+All coordinates/dimensions are in mm. All output is JSON.
+
+Examples — Features:
+    fusion-solid extrude --sketch S --distance 10
+    fusion-solid extrude --sketch S --distance 5 --op join --target Body1
+    fusion-solid revolve --sketch S --axis z --angle 360
+    fusion-solid loft --sketches S1 S2
+    fusion-solid sweep --profile-sketch S1 --path-sketch S2
+    fusion-solid fillet --edges Body1_edge_0 Body1_edge_1 --radius 2
+    fusion-solid chamfer --edges Body1_edge_0 --distance 1
+    fusion-solid boolean --op union --target Body1 --tools Body2 Body3
+    fusion-solid shell --body Body1 --thickness 2 --faces 0 1
+    fusion-solid split --body Body1 --tool xy
+
+Examples — Primitives:
+    fusion-solid box --c1 0,0,0 --c2 100,80,20
+    fusion-solid box --center 50,40,10 --width 100 --depth 80 --height 20
+    fusion-solid cylinder --center 0,0,0 --radius 25 --height 50
+    fusion-solid sphere --center 0,0,0 --radius 30
+    fusion-solid hole --body Body1 --center 50,40,20 --diameter 10 --through
+
+Examples — Query:
+    fusion-solid list
+    fusion-solid edges --body Body1
+    fusion-solid faces --body Body1
+    fusion-solid face-info --body Body1 --face Body1_face_0
+    fusion-solid center --body Body1
+    fusion-solid intersections --b1 Body1 --b2 Body2
+    fusion-solid summary
+    fusion-solid planes
+
+Examples — Transforms:
+    fusion-solid copy --body Body1 --name Body1_Copy
+    fusion-solid move --body Body1 --translate 10,0,0
+    fusion-solid mirror --body Body1 --plane yz
+    fusion-solid pattern --body Body1 --dir 1,0,0 --count 4 --spacing 25
+    fusion-solid delete --body Body1
+"""
+
+import argparse
+import json
+import sys
+import urllib.request
+import urllib.error
+
+BRIDGE = "http://localhost:8080"
+
+
+def call(endpoint, body=None):
+    data = json.dumps(body or {}).encode()
+    req = urllib.request.Request(
+        f"{BRIDGE}{endpoint}", data=data,
+        headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.URLError as e:
+        return {"error": True, "message": f"Cannot connect to Fusion bridge: {e}"}
+    except Exception as e:
+        return {"error": True, "message": str(e)}
+
+
+def out(data):
+    print(json.dumps(data, indent=2))
+
+
+def p3(s):
+    """Parse 'x,y,z' into [x, y, z]."""
+    parts = [float(x.strip()) for x in s.split(",")]
+    if len(parts) != 3:
+        sys.exit(f"Error: expected x,y,z but got '{s}'")
+    return parts
+
+
+def pvec(s):
+    """Parse direction vector '1,0,0' into [1, 0, 0]."""
+    return [float(x.strip()) for x in s.split(",")]
+
+
+# ── Subcommand handlers ──────────────────────────────────────
+
+def cmd_extrude(args):
+    payload = {"sketch_id": args.sketch, "distance": args.distance,
+               "direction": args.dir, "operation": args.op, "profile_index": args.profile}
+    if args.target:
+        payload["target_body"] = args.target
+    if args.component:
+        payload["component"] = args.component
+    if args.name:
+        payload["body_name"] = args.name
+    out(call("/extrude", payload))
+
+
+def cmd_extrude_draft(args):
+    payload = {"sketch_id": args.sketch, "distance": args.distance,
+               "draft_angle": args.draft, "direction": args.dir, "operation": args.op,
+               "profile_index": args.profile}
+    if args.target:
+        payload["target_body"] = args.target
+    out(call("/extrude_with_draft", payload))
+
+
+def cmd_revolve(args):
+    payload = {"sketch_id": args.sketch, "axis": args.axis,
+               "angle": args.angle, "operation": args.op, "profile_index": args.profile}
+    if args.axis_sketch:
+        payload["axis_sketch_id"] = args.axis_sketch
+        payload["axis_line_index"] = args.axis_line
+    out(call("/revolve", payload))
+
+
+def cmd_loft(args):
+    payload = {"sketch_ids": args.sketches, "operation": args.op,
+               "is_solid": not args.surface}
+    if args.profiles:
+        payload["profile_indices"] = args.profiles
+    if args.rails:
+        payload["rails"] = args.rails
+    out(call("/loft", payload))
+
+
+def cmd_sweep(args):
+    payload = {"profile_sketch_id": args.profile_sketch,
+               "path_sketch_id": args.path_sketch,
+               "operation": args.op, "profile_index": args.profile}
+    if args.orientation:
+        payload["orientation"] = args.orientation
+    if args.twist:
+        payload["twist_angle"] = args.twist
+    out(call("/sweep", payload))
+
+
+def cmd_fillet(args):
+    out(call("/fillet_edges", {"edge_ids": args.edges, "radius": args.radius,
+                                "tangent_chain": not args.no_chain}))
+
+
+def cmd_chamfer(args):
+    out(call("/chamfer_edges", {"edge_ids": args.edges, "distance": args.distance}))
+
+
+def cmd_boolean(args):
+    payload = {"operation": args.op, "target_body": args.target,
+               "tool_bodies": args.tools, "keep_tools": args.keep_tools}
+    out(call("/boolean", payload))
+
+
+def cmd_shell(args):
+    payload = {"body_id": args.body, "thickness": args.thickness,
+               "direction": args.dir}
+    if args.faces:
+        payload["remove_faces"] = args.faces
+    out(call("/shell", payload))
+
+
+def cmd_split(args):
+    out(call("/split_body", {"body_id": args.body, "splitting_tool": args.tool,
+                              "keep": args.keep}))
+
+
+def cmd_patch(args):
+    payload = {"sketch_id": args.sketch, "profile_index": args.profile}
+    if args.component:
+        payload["component"] = args.component
+    if args.name:
+        payload["body_name"] = args.name
+    out(call("/create_patch", payload))
+
+
+def cmd_stitch(args):
+    payload = {"body_ids": args.bodies, "tolerance": args.tolerance}
+    if args.name:
+        payload["body_name"] = args.name
+    out(call("/stitch", payload))
+
+
+# ── Primitives ────────────────────────────────────────────────
+
+def cmd_box(args):
+    payload = {}
+    if args.center:
+        payload["center"] = p3(args.center)
+        payload["width"] = args.width
+        payload["depth"] = args.depth
+        payload["height"] = args.height
+    else:
+        payload["corner1"] = p3(args.c1)
+        payload["corner2"] = p3(args.c2)
+    if args.name:
+        payload["name"] = args.name
+    out(call("/create_box", payload))
+
+
+def cmd_cylinder(args):
+    payload = {"center": p3(args.center), "radius": args.radius,
+               "height": args.height, "axis": args.axis}
+    if args.name:
+        payload["name"] = args.name
+    out(call("/create_cylinder", payload))
+
+
+def cmd_sphere(args):
+    payload = {"center": p3(args.center), "radius": args.radius}
+    if args.name:
+        payload["name"] = args.name
+    out(call("/create_sphere", payload))
+
+
+def cmd_hole(args):
+    payload = {"body_id": args.body, "center": p3(args.center),
+               "diameter": args.diameter, "axis": args.axis,
+               "through_all": args.through}
+    if not args.through:
+        payload["depth"] = args.depth
+    out(call("/create_hole", payload))
+
+
+def cmd_box_joint(args):
+    payload = {"receiving_body": args.receiving, "mating_body": args.mating,
+               "joint_edge": args.edge, "finger_width": args.finger_width,
+               "finger_depth": args.finger_depth}
+    if args.component:
+        payload["component"] = args.component
+    out(call("/create_box_joint", payload))
+
+
+# ── Polyhedron / Planes ──────────────────────────────────────
+
+def cmd_angled_plane(args):
+    payload = {}
+    if args.point and args.normal:
+        payload["point"] = p3(args.point)
+        payload["normal"] = p3(args.normal)
+    elif args.p1 and args.p2 and args.p3_pt:
+        payload["three_points"] = [p3(args.p1), p3(args.p2), p3(args.p3_pt)]
+    else:
+        sys.exit("Provide --point + --normal, or --p1 --p2 --p3")
+    if args.name:
+        payload["name"] = args.name
+    out(call("/create_angled_plane", payload))
+
+
+def cmd_plane_by_angle(args):
+    out(call("/create_plane_by_angle", {"base_plane": args.base, "sketch_id": args.sketch,
+                                          "line_index": args.line, "angle": args.angle,
+                                          "name": args.name}))
+
+
+def cmd_polyhedron(args):
+    verts = {}
+    for v in args.vertex:
+        name, coords = v.split("=", 1)
+        verts[name] = p3(coords)
+    faces = []
+    for f in args.face:
+        faces.append(f.split(","))
+    payload = {"vertices": verts, "faces": faces}
+    if args.name:
+        payload["name"] = args.name
+    out(call("/create_polyhedron", payload))
+
+
+def cmd_tri_prism(args):
+    payload = {"v1": p3(args.v1), "v2": p3(args.v2), "v3": p3(args.v3),
+               "height": args.height}
+    if args.name:
+        payload["name"] = args.name
+    out(call("/create_triangular_prism", payload))
+
+
+# ── Query ─────────────────────────────────────────────────────
+
+def cmd_list(args):
+    payload = {"include_all": True}
+    if args.component:
+        payload["component"] = args.component
+    out(call("/list_bodies", payload))
+
+
+def cmd_edges(args):
+    payload = {"body_id": args.body}
+    if args.component:
+        payload["component"] = args.component
+    out(call("/list_edges", payload))
+
+
+def cmd_faces(args):
+    payload = {"body_id": args.body}
+    if args.component:
+        payload["component"] = args.component
+    out(call("/list_faces", payload))
+
+
+def cmd_face_info(args):
+    payload = {"body_id": args.body, "face_id": args.face}
+    if args.component:
+        payload["component"] = args.component
+    out(call("/get_face_info", payload))
+
+
+def cmd_center(args):
+    out(call("/get_body_center", {"body_id": args.body}))
+
+
+def cmd_intersections(args):
+    payload = {"body1": args.b1, "body2": args.b2}
+    if args.component:
+        payload["component"] = args.component
+    out(call("/find_body_intersections", payload))
+
+
+def cmd_select(args):
+    out(call("/select_by_position", {"point": p3(args.point), "type": args.type,
+                                      "tolerance": args.tolerance}))
+
+
+def cmd_summary(args):
+    out(call("/get_model_summary", {}))
+
+
+def cmd_planes(args):
+    out(call("/list_planes", {}))
+
+
+def cmd_offset_plane(args):
+    payload = {"base_plane": args.base, "offset": args.offset}
+    if args.component:
+        payload["component"] = args.component
+    out(call("/create_offset_plane", payload))
+
+
+# ── Transforms ────────────────────────────────────────────────
+
+def cmd_copy(args):
+    payload = {"body_id": args.body}
+    if args.name:
+        payload["name"] = args.name
+    out(call("/copy_body", payload))
+
+
+def cmd_move(args):
+    payload = {"body_id": args.body}
+    if args.translate:
+        payload["translation"] = p3(args.translate)
+    if args.rotate_axis and args.rotate_angle is not None:
+        rot = {"axis": pvec(args.rotate_axis), "angle": args.rotate_angle}
+        if args.rotate_origin:
+            rot["origin"] = p3(args.rotate_origin)
+        payload["rotation"] = rot
+    out(call("/move_body", payload))
+
+
+def cmd_mirror(args):
+    out(call("/mirror_body", {"body_id": args.body, "plane": args.plane}))
+
+
+def cmd_pattern(args):
+    payload = {"body_id": args.body, "direction1": pvec(args.dir),
+               "count1": args.count, "spacing1": args.spacing}
+    if args.dir2:
+        payload["direction2"] = pvec(args.dir2)
+        payload["count2"] = args.count2
+        if args.spacing2:
+            payload["spacing2"] = args.spacing2
+    out(call("/pattern_rectangular", payload))
+
+
+def cmd_delete(args):
+    payload = {"body_name": args.body}
+    if args.component:
+        payload["component"] = args.component
+    out(call("/delete_body", payload))
+
+
+# ── argparse setup ────────────────────────────────────────────
+
+def build_parser():
+    parser = argparse.ArgumentParser(prog="fusion-solid",
+                                      description="Fusion 360 solid/body CLI")
+    sub = parser.add_subparsers(dest="command")
+
+    # Features
+    p = sub.add_parser("extrude", help="Extrude a sketch profile")
+    p.add_argument("--sketch", required=True)
+    p.add_argument("--distance", type=float, default=10)
+    p.add_argument("--dir", choices=["positive", "negative", "symmetric"], default="positive")
+    p.add_argument("--op", choices=["new_body", "join", "cut", "intersect"], default="new_body")
+    p.add_argument("--profile", type=int, default=0)
+    p.add_argument("--target")
+    p.add_argument("--component")
+    p.add_argument("--name")
+    p.set_defaults(func=cmd_extrude)
+
+    p = sub.add_parser("extrude-draft", help="Extrude with draft/taper")
+    p.add_argument("--sketch", required=True)
+    p.add_argument("--distance", type=float, default=10)
+    p.add_argument("--draft", type=float, default=0, help="Draft angle in degrees")
+    p.add_argument("--dir", choices=["positive", "negative", "symmetric"], default="positive")
+    p.add_argument("--op", choices=["new_body", "join", "cut", "intersect"], default="new_body")
+    p.add_argument("--profile", type=int, default=0)
+    p.add_argument("--target")
+    p.set_defaults(func=cmd_extrude_draft)
+
+    p = sub.add_parser("revolve", help="Revolve a profile around an axis")
+    p.add_argument("--sketch", required=True)
+    p.add_argument("--axis", default="x", help="x, y, z, or construction axis")
+    p.add_argument("--angle", type=float, default=360)
+    p.add_argument("--op", choices=["new_body", "join", "cut", "intersect"], default="new_body")
+    p.add_argument("--profile", type=int, default=0)
+    p.add_argument("--axis-sketch", help="Sketch containing axis line")
+    p.add_argument("--axis-line", type=int, default=0)
+    p.set_defaults(func=cmd_revolve)
+
+    p = sub.add_parser("loft", help="Loft between 2+ sketch profiles")
+    p.add_argument("--sketches", nargs="+", required=True)
+    p.add_argument("--profiles", nargs="+", type=int)
+    p.add_argument("--op", choices=["new_body", "join", "cut", "intersect"], default="new_body")
+    p.add_argument("--surface", action="store_true", help="Create surface instead of solid")
+    p.add_argument("--rails", nargs="+")
+    p.set_defaults(func=cmd_loft)
+
+    p = sub.add_parser("sweep", help="Sweep a profile along a path")
+    p.add_argument("--profile-sketch", required=True)
+    p.add_argument("--path-sketch", required=True)
+    p.add_argument("--op", choices=["new_body", "join", "cut", "intersect"], default="new_body")
+    p.add_argument("--profile", type=int, default=0)
+    p.add_argument("--orientation", choices=["perpendicular", "parallel"])
+    p.add_argument("--twist", type=float)
+    p.set_defaults(func=cmd_sweep)
+
+    p = sub.add_parser("fillet", help="Fillet edges")
+    p.add_argument("--edges", nargs="+", required=True)
+    p.add_argument("--radius", type=float, required=True)
+    p.add_argument("--no-chain", action="store_true")
+    p.set_defaults(func=cmd_fillet)
+
+    p = sub.add_parser("chamfer", help="Chamfer edges")
+    p.add_argument("--edges", nargs="+", required=True)
+    p.add_argument("--distance", type=float, required=True)
+    p.set_defaults(func=cmd_chamfer)
+
+    p = sub.add_parser("boolean", help="Boolean combine bodies")
+    p.add_argument("--op", choices=["union", "subtract", "intersect"], required=True)
+    p.add_argument("--target", required=True)
+    p.add_argument("--tools", nargs="+", required=True)
+    p.add_argument("--keep-tools", action="store_true")
+    p.set_defaults(func=cmd_boolean)
+
+    p = sub.add_parser("shell", help="Shell a body")
+    p.add_argument("--body", required=True)
+    p.add_argument("--thickness", type=float, required=True)
+    p.add_argument("--faces", nargs="+", help="Face IDs to remove")
+    p.add_argument("--dir", choices=["inside", "outside", "both"], default="inside")
+    p.set_defaults(func=cmd_shell)
+
+    p = sub.add_parser("split", help="Split a body")
+    p.add_argument("--body", required=True)
+    p.add_argument("--tool", required=True, help="Plane (xy/xz/yz/name) or body name")
+    p.add_argument("--keep", choices=["both", "positive", "negative"], default="both")
+    p.set_defaults(func=cmd_split)
+
+    p = sub.add_parser("patch", help="Create a surface patch from a sketch profile")
+    p.add_argument("--sketch", required=True)
+    p.add_argument("--profile", type=int, default=0)
+    p.add_argument("--component")
+    p.add_argument("--name")
+    p.set_defaults(func=cmd_patch)
+
+    p = sub.add_parser("stitch", help="Stitch surface bodies together")
+    p.add_argument("--bodies", nargs="+", required=True)
+    p.add_argument("--tolerance", type=float, default=0.1)
+    p.add_argument("--name")
+    p.set_defaults(func=cmd_stitch)
+
+    # Primitives
+    p = sub.add_parser("box", help="Create a box primitive")
+    p.add_argument("--c1", help="Corner 1 as x,y,z")
+    p.add_argument("--c2", help="Corner 2 as x,y,z")
+    p.add_argument("--center", help="Center as x,y,z (with --width/--depth/--height)")
+    p.add_argument("--width", type=float, default=100)
+    p.add_argument("--depth", type=float, default=100)
+    p.add_argument("--height", type=float, default=100)
+    p.add_argument("--name")
+    p.set_defaults(func=cmd_box)
+
+    p = sub.add_parser("cylinder", help="Create a cylinder primitive")
+    p.add_argument("--center", default="0,0,0")
+    p.add_argument("--radius", type=float, required=True)
+    p.add_argument("--height", type=float, required=True)
+    p.add_argument("--axis", choices=["x", "y", "z"], default="z")
+    p.add_argument("--name")
+    p.set_defaults(func=cmd_cylinder)
+
+    p = sub.add_parser("sphere", help="Create a sphere primitive")
+    p.add_argument("--center", default="0,0,0")
+    p.add_argument("--radius", type=float, required=True)
+    p.add_argument("--name")
+    p.set_defaults(func=cmd_sphere)
+
+    p = sub.add_parser("hole", help="Cut a hole in a body")
+    p.add_argument("--body", required=True)
+    p.add_argument("--center", required=True)
+    p.add_argument("--diameter", type=float, required=True)
+    p.add_argument("--depth", type=float, default=100)
+    p.add_argument("--axis", choices=["x", "y", "z"], default="z")
+    p.add_argument("--through", action="store_true")
+    p.set_defaults(func=cmd_hole)
+
+    p = sub.add_parser("box-joint", help="Box joint helper between two panels")
+    p.add_argument("--receiving", required=True)
+    p.add_argument("--mating", required=True)
+    p.add_argument("--edge", required=True, choices=["front", "back", "left", "right"])
+    p.add_argument("--finger-width", type=float, default=12.7)
+    p.add_argument("--finger-depth", type=float, default=12.7)
+    p.add_argument("--component")
+    p.set_defaults(func=cmd_box_joint)
+
+    # Polyhedron / Planes
+    p = sub.add_parser("angled-plane", help="Create an angled construction plane")
+    p.add_argument("--point", help="Point on plane x,y,z")
+    p.add_argument("--normal", help="Normal vector x,y,z")
+    p.add_argument("--p1", help="First point x,y,z")
+    p.add_argument("--p2", help="Second point x,y,z")
+    p.add_argument("--p3", dest="p3_pt", help="Third point x,y,z")
+    p.add_argument("--name")
+    p.set_defaults(func=cmd_angled_plane)
+
+    p = sub.add_parser("plane-by-angle", help="Plane at angle to base plane")
+    p.add_argument("--base", default="xy")
+    p.add_argument("--sketch", required=True)
+    p.add_argument("--line", type=int, default=0)
+    p.add_argument("--angle", type=float, required=True)
+    p.add_argument("--name")
+    p.set_defaults(func=cmd_plane_by_angle)
+
+    p = sub.add_parser("polyhedron", help="Create a solid polyhedron from vertices + faces")
+    p.add_argument("--vertex", nargs="+", required=True, help="V1=0,0,0 V2=10,0,0 ...")
+    p.add_argument("--face", nargs="+", required=True, help="V1,V2,V3 V1,V3,V4 ...")
+    p.add_argument("--name")
+    p.set_defaults(func=cmd_polyhedron)
+
+    p = sub.add_parser("tri-prism", help="Create a triangular prism")
+    p.add_argument("--v1", required=True)
+    p.add_argument("--v2", required=True)
+    p.add_argument("--v3", required=True)
+    p.add_argument("--height", type=float, required=True)
+    p.add_argument("--name")
+    p.set_defaults(func=cmd_tri_prism)
+
+    # Query
+    p = sub.add_parser("list", help="List all bodies")
+    p.add_argument("--component")
+    p.set_defaults(func=cmd_list)
+
+    p = sub.add_parser("edges", help="List edges of a body")
+    p.add_argument("--body", required=True)
+    p.add_argument("--component")
+    p.set_defaults(func=cmd_edges)
+
+    p = sub.add_parser("faces", help="List faces of a body")
+    p.add_argument("--body", required=True)
+    p.add_argument("--component")
+    p.set_defaults(func=cmd_faces)
+
+    p = sub.add_parser("face-info", help="Detailed face information")
+    p.add_argument("--body", required=True)
+    p.add_argument("--face", required=True)
+    p.add_argument("--component")
+    p.set_defaults(func=cmd_face_info)
+
+    p = sub.add_parser("center", help="Get body center and bounding box")
+    p.add_argument("--body", required=True)
+    p.set_defaults(func=cmd_center)
+
+    p = sub.add_parser("intersections", help="Find intersections between two bodies")
+    p.add_argument("--b1", required=True)
+    p.add_argument("--b2", required=True)
+    p.add_argument("--component")
+    p.set_defaults(func=cmd_intersections)
+
+    p = sub.add_parser("select", help="Select geometry by 3D position")
+    p.add_argument("--point", required=True)
+    p.add_argument("--type", choices=["edge", "face", "body"], default="edge")
+    p.add_argument("--tolerance", type=float, default=1)
+    p.set_defaults(func=cmd_select)
+
+    p = sub.add_parser("summary", help="Get full model summary")
+    p.set_defaults(func=cmd_summary)
+
+    p = sub.add_parser("planes", help="List all construction planes")
+    p.set_defaults(func=cmd_planes)
+
+    p = sub.add_parser("offset-plane", help="Create an offset construction plane")
+    p.add_argument("--base", default="xy")
+    p.add_argument("--offset", type=float, required=True, help="Offset in mm")
+    p.add_argument("--component")
+    p.set_defaults(func=cmd_offset_plane)
+
+    # Transforms
+    p = sub.add_parser("copy", help="Copy a body")
+    p.add_argument("--body", required=True)
+    p.add_argument("--name")
+    p.set_defaults(func=cmd_copy)
+
+    p = sub.add_parser("move", help="Move/rotate a body")
+    p.add_argument("--body", required=True)
+    p.add_argument("--translate", help="Translation x,y,z in mm")
+    p.add_argument("--rotate-axis", help="Rotation axis x,y,z")
+    p.add_argument("--rotate-angle", type=float, help="Rotation angle in degrees")
+    p.add_argument("--rotate-origin", help="Rotation origin x,y,z")
+    p.set_defaults(func=cmd_move)
+
+    p = sub.add_parser("mirror", help="Mirror a body across a plane")
+    p.add_argument("--body", required=True)
+    p.add_argument("--plane", default="xy", help="xy, xz, yz, or plane name")
+    p.set_defaults(func=cmd_mirror)
+
+    p = sub.add_parser("pattern", help="Rectangular pattern of a body")
+    p.add_argument("--body", required=True)
+    p.add_argument("--dir", required=True, help="Direction vector 1,0,0")
+    p.add_argument("--count", type=int, required=True)
+    p.add_argument("--spacing", type=float, required=True, help="Spacing in mm")
+    p.add_argument("--dir2", help="Second direction")
+    p.add_argument("--count2", type=int, default=1)
+    p.add_argument("--spacing2", type=float)
+    p.set_defaults(func=cmd_pattern)
+
+    p = sub.add_parser("delete", help="Delete a body")
+    p.add_argument("--body", required=True)
+    p.add_argument("--component")
+    p.set_defaults(func=cmd_delete)
+
+    return parser
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

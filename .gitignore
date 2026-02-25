@@ -1,0 +1,21 @@
+# Asset pack (contains API keys in .env, large generated images)
+gemini-asset-pack-loop/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backup files
+*.bak
+
+# Python
+__pycache__/
+*.pyc

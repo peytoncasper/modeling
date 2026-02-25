@@ -66,6 +66,8 @@ The **reference frame system** will provide persistent spatial context for CAD o
 | **Box Joints** | `box-joints.md` | Finger/box joints (high-strength applications) |
 | **Mortises** | `mortises.md` | Recessed pockets for hardware |
 | **Corner Splines** | `corner-splines.md` | Structural corner braces with dados and screw holes |
+| **Cam Lock + Dowel** | `cam-lock-dowel.md` | Flat-pack knockdown fittings (Minifix) for customer assembly |
+| **CAD Nav State** | `cad-nav-state.md` | STATE + PATCH + LOCAL_GRAPH streaming context system |
 
 ### Reading Order for Box Projects
 
@@ -75,6 +77,7 @@ The **reference frame system** will provide persistent spatial context for CAD o
 4. `corner-splines.md` - Structural corner reinforcement and alignment
 5. `box-joints.md` - The box joint process
 6. `mortises.md` - Adding hardware pockets
+7. `cam-lock-dowel.md` - Knockdown fittings for flat-pack / customer-assembled products
 
 ## Primitive Tools Available
 

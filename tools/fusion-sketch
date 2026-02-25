@@ -1,0 +1,507 @@
+#!/usr/bin/env python3
+"""CLI for Fusion 360 sketch operations — complete coverage.
+
+Wraps the FusionMCPBridge HTTP API at localhost:8080.
+All coordinates are in mm. All output is JSON.
+
+Examples:
+    fusion-sketch create --plane xy --name MySketch
+    fusion-sketch rect --sketch S --c1 0,0 --c2 20,30
+    fusion-sketch rect3d --sketch S --wc1 0,0,0 --wc2 20,30,0
+    fusion-sketch line --sketch S --start 0,0 --end 20,0
+    fusion-sketch polygon --sketch S --center 50,50 --radius 30 --sides 6
+    fusion-sketch slot --sketch S --c1 10,10 --c2 40,10 --radius 5
+    fusion-sketch trim --sketch S --curve S_curve_2 --point 10,5
+    fusion-sketch offset --sketch S --curves S_curve_0 S_curve_1 --dist 3 --dir 0,10
+    fusion-sketch mirror --sketch S --curves S_curve_0 --line S_curve_4
+    fusion-sketch constrain --sketch S --type coincident --e1 S_curve_0 --e2 S_curve_1
+    fusion-sketch add-dim --sketch S --type distance --e1 S_curve_0 --value 50
+    fusion-sketch info --sketch S
+    fusion-sketch list
+"""
+
+import argparse
+import json
+import sys
+import urllib.request
+import urllib.error
+
+BRIDGE = "http://localhost:8080"
+
+
+def call(endpoint, body=None):
+    data = json.dumps(body or {}).encode()
+    req = urllib.request.Request(
+        f"{BRIDGE}{endpoint}", data=data,
+        headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.URLError as e:
+        return {"error": True, "message": f"Cannot connect to Fusion bridge: {e}"}
+    except Exception as e:
+        return {"error": True, "message": str(e)}
+
+
+def out(data):
+    print(json.dumps(data, indent=2))
+
+
+def p2(s):
+    """Parse 'x,y' into [x, y]."""
+    parts = [float(x.strip()) for x in s.split(",")]
+    if len(parts) != 2:
+        sys.exit(f"Error: expected x,y but got '{s}'")
+    return parts
+
+
+def p3(s):
+    """Parse 'x,y,z' into [x, y, z]."""
+    parts = [float(x.strip()) for x in s.split(",")]
+    if len(parts) != 3:
+        sys.exit(f"Error: expected x,y,z but got '{s}'")
+    return parts
+
+
+# ── Lifecycle ─────────────────────────────────────────────────
+
+def cmd_create(a):
+    body = {"plane": a.plane}
+    if a.name: body["name"] = a.name
+    if a.component: body["component"] = a.component
+    out(call("/create_sketch", body))
+
+def cmd_create_on_face(a):
+    body = {"body_id": a.body, "face_id": a.face}
+    if a.name: body["name"] = a.name
+    if a.component: body["component"] = a.component
+    out(call("/create_sketch_on_face", body))
+
+def cmd_finish(a):
+    out(call("/finish_sketch", {"sketch_id": a.sketch}))
+
+def cmd_delete(a):
+    body = {"sketch_name": a.sketch}
+    if a.component: body["component"] = a.component
+    out(call("/delete_sketch", body))
+
+def cmd_list(a):
+    out(call("/list_sketches", {}))
+
+
+# ── Drawing primitives ────────────────────────────────────────
+
+def cmd_line(a):
+    body = {"sketch_id": a.sketch, "start": p2(a.start), "end": p2(a.end)}
+    if a.construction: body["construction"] = True
+    out(call("/draw_line", body))
+
+def cmd_arc(a):
+    out(call("/draw_arc", {
+        "sketch_id": a.sketch, "center": p2(a.center),
+        "radius": a.radius, "start_angle": a.start_angle, "sweep_angle": a.sweep}))
+
+def cmd_arc3(a):
+    out(call("/draw_arc_3point", {
+        "sketch_id": a.sketch, "start": p2(a.start),
+        "mid": p2(a.mid), "end": p2(a.end)}))
+
+def cmd_circle(a):
+    out(call("/draw_circle", {
+        "sketch_id": a.sketch, "center": p2(a.center), "radius": a.radius}))
+
+def cmd_rect(a):
+    out(call("/draw_rectangle", {
+        "sketch_id": a.sketch, "corner1": p2(a.c1), "corner2": p2(a.c2)}))
+
+def cmd_rect3d(a):
+    out(call("/draw_rectangle_3d", {
+        "sketch_id": a.sketch, "world_corner1": p3(a.wc1), "world_corner2": p3(a.wc2)}))
+
+def cmd_spline(a):
+    body = {"sketch_id": a.sketch, "points": [p2(p) for p in a.points]}
+    if a.closed: body["closed"] = True
+    out(call("/draw_spline", body))
+
+def cmd_polygon(a):
+    body = {"sketch_id": a.sketch, "center": p2(a.center),
+            "radius": a.radius, "sides": a.sides}
+    if a.rotation: body["rotation"] = a.rotation
+    out(call("/draw_polygon", body))
+
+def cmd_slot(a):
+    out(call("/draw_slot", {
+        "sketch_id": a.sketch, "center1": p2(a.c1),
+        "center2": p2(a.c2), "radius": a.radius}))
+
+def cmd_centerline(a):
+    out(call("/draw_centerline", {
+        "sketch_id": a.sketch, "start": p2(a.start), "end": p2(a.end)}))
+
+def cmd_point(a):
+    out(call("/draw_point", {"sketch_id": a.sketch, "position": p2(a.pos)}))
+
+
+# ── Modifications ─────────────────────────────────────────────
+
+def cmd_fillet(a):
+    body = {"sketch_id": a.sketch, "curve1_id": a.c1, "curve2_id": a.c2, "radius": a.radius}
+    out(call("/sketch_fillet", body))
+
+def cmd_trim(a):
+    out(call("/sketch_trim", {
+        "sketch_id": a.sketch, "curve_id": a.curve, "point": p2(a.point)}))
+
+def cmd_extend(a):
+    body = {"sketch_id": a.sketch, "curve_id": a.curve, "point": p2(a.point)}
+    if a.from_start: body["from_start"] = True
+    out(call("/sketch_extend", body))
+
+def cmd_offset(a):
+    out(call("/sketch_offset", {
+        "sketch_id": a.sketch, "curve_ids": a.curves,
+        "direction_point": p2(a.dir), "distance": a.dist}))
+
+def cmd_mirror(a):
+    out(call("/sketch_mirror", {
+        "sketch_id": a.sketch, "curve_ids": a.curves,
+        "mirror_line_id": a.line}))
+
+def cmd_pattern_rect(a):
+    body = {"sketch_id": a.sketch, "curve_ids": a.curves,
+            "x_count": a.xn, "y_count": a.yn,
+            "x_spacing": a.xs, "y_spacing": a.ys}
+    out(call("/sketch_pattern_rectangular", body))
+
+def cmd_pattern_circ(a):
+    body = {"sketch_id": a.sketch, "curve_ids": a.curves,
+            "center": p2(a.center), "count": a.count}
+    if a.angle: body["total_angle"] = a.angle
+    out(call("/sketch_pattern_circular", body))
+
+
+# ── Constraints ───────────────────────────────────────────────
+
+def cmd_coincident(a):
+    body = {"sketch_id": a.sketch}
+    if a.tolerance: body["tolerance"] = a.tolerance
+    out(call("/apply_coincident_constraints", body))
+
+def cmd_constrain(a):
+    body = {"sketch_id": a.sketch, "constraint_type": a.type, "entity1": a.e1}
+    if a.e2: body["entity2"] = a.e2
+    out(call("/add_constraint", body))
+
+def cmd_list_constraints(a):
+    out(call("/list_constraints", {"sketch_id": a.sketch}))
+
+
+# ── Dimensions ────────────────────────────────────────────────
+
+def cmd_dims(a):
+    out(call("/list_sketch_dimensions", {"sketch_id": a.sketch}))
+
+def cmd_dim_edit(a):
+    body = {"sketch_id": a.sketch, "dimension_index": a.dim}
+    if a.value is not None: body["value"] = a.value
+    if a.expr: body["expression"] = a.expr
+    out(call("/edit_sketch_dimension", body))
+
+def cmd_add_dim(a):
+    body = {"sketch_id": a.sketch, "dimension_type": a.type, "entity1": a.e1}
+    if a.e2: body["entity2"] = a.e2
+    if a.value is not None: body["value"] = a.value
+    if a.pos: body["text_position"] = p2(a.pos)
+    out(call("/add_dimension", body))
+
+
+# ── Analysis ──────────────────────────────────────────────────
+
+def cmd_gaps(a):
+    body = {"sketch_id": a.sketch}
+    if a.tolerance is not None: body["tolerance"] = a.tolerance
+    out(call("/analyze_sketch_gaps", body))
+
+def cmd_close_gaps(a):
+    body = {"sketch_id": a.sketch}
+    if a.tolerance is not None: body["tolerance"] = a.tolerance
+    if a.max_gap is not None: body["max_line_gap"] = a.max_gap
+    if a.dry_run: body["dry_run"] = True
+    out(call("/close_sketch_gaps", body))
+
+def cmd_recreate(a):
+    body = {"sketch_id": a.sketch}
+    if a.new_name: body["new_sketch_name"] = a.new_name
+    if a.delete_orig: body["delete_original"] = True
+    out(call("/recreate_sketch_as_polygon", body))
+
+
+# ── Query ─────────────────────────────────────────────────────
+
+def cmd_profiles(a):
+    out(call("/get_sketch_profiles", {"sketch_id": a.sketch}))
+
+def cmd_info(a):
+    out(call("/get_sketch_info", {"sketch_id": a.sketch}))
+
+def cmd_coords(a):
+    out(call("/sketch_to_3d_coords", {
+        "sketch_id": a.sketch, "points": [p2(p) for p in a.points]}))
+
+def cmd_suggest(a):
+    out(call("/suggest_sketch_coords", {
+        "plane": a.plane, "world_min": p3(a.wmin), "world_max": p3(a.wmax)}))
+
+def cmd_graph(a):
+    body = {"focus_kind": "sketch"}
+    if a.sketch: body["focus_id"] = a.sketch
+    else: body["focus_kind"] = "auto"
+    out(call("/get_local_graph", body))
+
+def cmd_state(a):
+    if a.compact:
+        out(call("/get_state_compact", {}))
+    else:
+        out(call("/get_state", {"sparse": True}))
+
+
+# ── Import / Text ─────────────────────────────────────────────
+
+def cmd_import_svg(a):
+    body = {"svg_path": a.path}
+    if a.plane: body["plane"] = a.plane
+    if a.body: body["body_id"] = a.body
+    if a.name: body["sketch_name"] = a.name
+    if a.scale: body["scale"] = a.scale
+    out(call("/import_svg", body))
+
+def cmd_text(a):
+    body = {"text": a.text}
+    if a.sketch: body["sketch_id"] = a.sketch
+    if a.plane: body["plane"] = a.plane
+    if a.font: body["font"] = a.font
+    if a.height: body["height"] = a.height
+    if a.pos: body["x"], body["y"] = p2(a.pos)
+    out(call("/add_text", body))
+
+
+# ── Argument parser ──────────────────────────────────────────
+
+def build_parser():
+    p = argparse.ArgumentParser(
+        prog="fusion-sketch",
+        description="Fusion 360 sketch CLI — all coords in mm, output JSON")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    # ─ lifecycle ─
+    c = sub.add_parser("create", help="Create a new sketch on a plane")
+    c.add_argument("--plane", default="xy"); c.add_argument("--name")
+    c.add_argument("--component"); c.set_defaults(func=cmd_create)
+
+    c = sub.add_parser("create-on-face", help="Create sketch on a body face")
+    c.add_argument("--body", required=True); c.add_argument("--face", required=True)
+    c.add_argument("--name"); c.add_argument("--component")
+    c.set_defaults(func=cmd_create_on_face)
+
+    c = sub.add_parser("finish", help="Finish/validate sketch")
+    c.add_argument("--sketch", required=True); c.set_defaults(func=cmd_finish)
+
+    c = sub.add_parser("delete", help="Delete a sketch")
+    c.add_argument("--sketch", required=True); c.add_argument("--component")
+    c.set_defaults(func=cmd_delete)
+
+    c = sub.add_parser("list", help="List all sketches")
+    c.set_defaults(func=cmd_list)
+
+    # ─ drawing primitives ─
+    c = sub.add_parser("line", help="Draw a line")
+    c.add_argument("--sketch", required=True)
+    c.add_argument("--start", required=True); c.add_argument("--end", required=True)
+    c.add_argument("--construction", action="store_true"); c.set_defaults(func=cmd_line)
+
+    c = sub.add_parser("arc", help="Draw arc (center+radius+angles)")
+    c.add_argument("--sketch", required=True); c.add_argument("--center", required=True)
+    c.add_argument("--radius", required=True, type=float)
+    c.add_argument("--start-angle", required=True, type=float)
+    c.add_argument("--sweep", required=True, type=float); c.set_defaults(func=cmd_arc)
+
+    c = sub.add_parser("arc3", help="Draw arc through 3 points")
+    c.add_argument("--sketch", required=True)
+    c.add_argument("--start", required=True); c.add_argument("--mid", required=True)
+    c.add_argument("--end", required=True); c.set_defaults(func=cmd_arc3)
+
+    c = sub.add_parser("circle", help="Draw a circle")
+    c.add_argument("--sketch", required=True); c.add_argument("--center", required=True)
+    c.add_argument("--radius", required=True, type=float); c.set_defaults(func=cmd_circle)
+
+    c = sub.add_parser("rect", help="Draw rectangle (sketch coords)")
+    c.add_argument("--sketch", required=True)
+    c.add_argument("--c1", required=True); c.add_argument("--c2", required=True)
+    c.set_defaults(func=cmd_rect)
+
+    c = sub.add_parser("rect3d", help="Draw rectangle (world coords, auto-converts)")
+    c.add_argument("--sketch", required=True)
+    c.add_argument("--wc1", required=True); c.add_argument("--wc2", required=True)
+    c.set_defaults(func=cmd_rect3d)
+
+    c = sub.add_parser("spline", help="Draw spline through points")
+    c.add_argument("--sketch", required=True)
+    c.add_argument("--points", nargs="+", required=True)
+    c.add_argument("--closed", action="store_true"); c.set_defaults(func=cmd_spline)
+
+    c = sub.add_parser("polygon", help="Draw regular polygon")
+    c.add_argument("--sketch", required=True); c.add_argument("--center", required=True)
+    c.add_argument("--radius", required=True, type=float)
+    c.add_argument("--sides", type=int, default=6)
+    c.add_argument("--rotation", type=float); c.set_defaults(func=cmd_polygon)
+
+    c = sub.add_parser("slot", help="Draw slot (oblong) shape")
+    c.add_argument("--sketch", required=True)
+    c.add_argument("--c1", required=True, help="center1 x,y")
+    c.add_argument("--c2", required=True, help="center2 x,y")
+    c.add_argument("--radius", required=True, type=float); c.set_defaults(func=cmd_slot)
+
+    c = sub.add_parser("centerline", help="Draw construction line")
+    c.add_argument("--sketch", required=True)
+    c.add_argument("--start", required=True); c.add_argument("--end", required=True)
+    c.set_defaults(func=cmd_centerline)
+
+    c = sub.add_parser("point", help="Place a sketch point")
+    c.add_argument("--sketch", required=True)
+    c.add_argument("--pos", required=True, help="position x,y"); c.set_defaults(func=cmd_point)
+
+    # ─ modifications ─
+    c = sub.add_parser("fillet", help="Fillet between two curves")
+    c.add_argument("--sketch", required=True)
+    c.add_argument("--c1", required=True, help="curve1 ID")
+    c.add_argument("--c2", required=True, help="curve2 ID")
+    c.add_argument("--radius", required=True, type=float); c.set_defaults(func=cmd_fillet)
+
+    c = sub.add_parser("trim", help="Trim a curve at a point")
+    c.add_argument("--sketch", required=True)
+    c.add_argument("--curve", required=True); c.add_argument("--point", required=True)
+    c.set_defaults(func=cmd_trim)
+
+    c = sub.add_parser("extend", help="Extend a curve toward a point")
+    c.add_argument("--sketch", required=True)
+    c.add_argument("--curve", required=True); c.add_argument("--point", required=True)
+    c.add_argument("--from-start", action="store_true"); c.set_defaults(func=cmd_extend)
+
+    c = sub.add_parser("offset", help="Offset curves by distance")
+    c.add_argument("--sketch", required=True)
+    c.add_argument("--curves", nargs="+", required=True)
+    c.add_argument("--dist", required=True, type=float)
+    c.add_argument("--dir", required=True, help="direction point x,y")
+    c.set_defaults(func=cmd_offset)
+
+    c = sub.add_parser("mirror", help="Mirror curves about a line")
+    c.add_argument("--sketch", required=True)
+    c.add_argument("--curves", nargs="+", required=True)
+    c.add_argument("--line", required=True, help="mirror line curve ID")
+    c.set_defaults(func=cmd_mirror)
+
+    c = sub.add_parser("pattern-rect", help="Rectangular pattern of curves")
+    c.add_argument("--sketch", required=True)
+    c.add_argument("--curves", nargs="+", required=True)
+    c.add_argument("--xn", type=int, default=2); c.add_argument("--yn", type=int, default=1)
+    c.add_argument("--xs", type=float, default=10); c.add_argument("--ys", type=float, default=10)
+    c.set_defaults(func=cmd_pattern_rect)
+
+    c = sub.add_parser("pattern-circ", help="Circular pattern of curves")
+    c.add_argument("--sketch", required=True)
+    c.add_argument("--curves", nargs="+", required=True)
+    c.add_argument("--center", required=True); c.add_argument("--count", type=int, default=4)
+    c.add_argument("--angle", type=float); c.set_defaults(func=cmd_pattern_circ)
+
+    # ─ constraints ─
+    c = sub.add_parser("coincident", help="Auto-apply coincident constraints to close gaps")
+    c.add_argument("--sketch", required=True)
+    c.add_argument("--tolerance", type=float); c.set_defaults(func=cmd_coincident)
+
+    c = sub.add_parser("constrain", help="Add a geometric constraint")
+    c.add_argument("--sketch", required=True)
+    c.add_argument("--type", required=True,
+                   choices=["coincident","horizontal","vertical","perpendicular",
+                            "parallel","tangent","equal","concentric","midpoint",
+                            "fix","collinear"])
+    c.add_argument("--e1", required=True, help="entity1 ID")
+    c.add_argument("--e2", help="entity2 ID (not needed for fix/horizontal/vertical)")
+    c.set_defaults(func=cmd_constrain)
+
+    c = sub.add_parser("list-constraints", help="List all constraints in sketch")
+    c.add_argument("--sketch", required=True); c.set_defaults(func=cmd_list_constraints)
+
+    # ─ dimensions ─
+    c = sub.add_parser("dims", help="List all dimensions")
+    c.add_argument("--sketch", required=True); c.set_defaults(func=cmd_dims)
+
+    c = sub.add_parser("dim-edit", help="Edit a dimension value")
+    c.add_argument("--sketch", required=True)
+    c.add_argument("--dim", required=True, type=int, help="dimension index")
+    c.add_argument("--value", type=float); c.add_argument("--expr")
+    c.set_defaults(func=cmd_dim_edit)
+
+    c = sub.add_parser("add-dim", help="Add a dimension to entities")
+    c.add_argument("--sketch", required=True)
+    c.add_argument("--type", required=True, choices=["distance","diameter","radius","angular"])
+    c.add_argument("--e1", required=True); c.add_argument("--e2")
+    c.add_argument("--value", type=float); c.add_argument("--pos", help="text pos x,y")
+    c.set_defaults(func=cmd_add_dim)
+
+    # ─ analysis ─
+    c = sub.add_parser("gaps", help="Analyze gaps in sketch")
+    c.add_argument("--sketch", required=True)
+    c.add_argument("--tolerance", type=float); c.set_defaults(func=cmd_gaps)
+
+    c = sub.add_parser("close-gaps", help="Auto-close gaps")
+    c.add_argument("--sketch", required=True)
+    c.add_argument("--tolerance", type=float); c.add_argument("--max-gap", type=float)
+    c.add_argument("--dry-run", action="store_true"); c.set_defaults(func=cmd_close_gaps)
+
+    c = sub.add_parser("recreate", help="Recreate sketch as proper closed polygon")
+    c.add_argument("--sketch", required=True)
+    c.add_argument("--new-name"); c.add_argument("--delete-orig", action="store_true")
+    c.set_defaults(func=cmd_recreate)
+
+    # ─ query ─
+    c = sub.add_parser("profiles", help="List profiles with bounds")
+    c.add_argument("--sketch", required=True); c.set_defaults(func=cmd_profiles)
+
+    c = sub.add_parser("info", help="Detailed sketch info (curves, points, constraints)")
+    c.add_argument("--sketch", required=True); c.set_defaults(func=cmd_info)
+
+    c = sub.add_parser("coords", help="Convert sketch 2D → world 3D")
+    c.add_argument("--sketch", required=True)
+    c.add_argument("--points", nargs="+", required=True); c.set_defaults(func=cmd_coords)
+
+    c = sub.add_parser("suggest", help="Suggest sketch coords for world bounds")
+    c.add_argument("--plane", default="xy")
+    c.add_argument("--wmin", required=True, help="world min x,y,z")
+    c.add_argument("--wmax", required=True, help="world max x,y,z")
+    c.set_defaults(func=cmd_suggest)
+
+    c = sub.add_parser("graph", help="Get sketch topology graph")
+    c.add_argument("--sketch"); c.set_defaults(func=cmd_graph)
+
+    c = sub.add_parser("state", help="Current CAD navigation state")
+    c.add_argument("--compact", action="store_true"); c.set_defaults(func=cmd_state)
+
+    # ─ import/text ─
+    c = sub.add_parser("import-svg", help="Import SVG into a sketch")
+    c.add_argument("--path", required=True); c.add_argument("--plane")
+    c.add_argument("--body"); c.add_argument("--name")
+    c.add_argument("--scale", type=float); c.set_defaults(func=cmd_import_svg)
+
+    c = sub.add_parser("text", help="Add text to a sketch")
+    c.add_argument("--text", required=True); c.add_argument("--sketch")
+    c.add_argument("--plane"); c.add_argument("--font")
+    c.add_argument("--height", type=float); c.add_argument("--pos")
+    c.set_defaults(func=cmd_text)
+
+    return p
+
+
+if __name__ == "__main__":
+    parser = build_parser()
+    args = parser.parse_args()
+    args.func(args)
