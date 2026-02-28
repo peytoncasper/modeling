@@ -10,6 +10,9 @@ fusion-design-mcp-server/
 sculptural-base-mcp/
 fusion-mcp-spec.md
 
+# === Cursor IDE (symlinks and local config) ===
+.cursor/
+
 # === Environment / secrets ===
 .env
 .env.local
