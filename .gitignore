@@ -1,21 +1,29 @@
-# Asset pack (contains API keys in .env, large generated images)
+# === Project data (not part of the tool) ===
 gemini-asset-pack-loop/
+fusion-patterns/
+CAD_NAV_STATE_PLAN.md
+DESIGN_RECONSTRUCTION_GUIDE.md
 
-# Environment files
+# === Legacy MCP servers (superseded by CLI tools) ===
+fusion-cam-mcp-server/
+fusion-design-mcp-server/
+sculptural-base-mcp/
+fusion-mcp-spec.md
+
+# === Environment / secrets ===
 .env
 .env.local
 .env.*.local
 
-# Node
+# === Build artifacts ===
 node_modules/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Backup files
+dist/
 *.bak
 
-# Python
+# === Python ===
 __pycache__/
 *.pyc
+
+# === OS ===
+.DS_Store
+Thumbs.db
