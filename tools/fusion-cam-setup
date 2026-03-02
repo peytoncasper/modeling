@@ -1,0 +1,517 @@
+#!/usr/bin/env python3
+"""CLI for Fusion 360 CAM setup / tools / post-processing operations.
+
+Wraps the FusionMCPBridge HTTP API at localhost:8080.
+All dimensions are in mm. All output is JSON.
+
+Examples — Setup Management:
+    fusion-cam-setup list                            # list all setups
+    fusion-cam-setup create --name MySetup           # create milling setup
+    fusion-cam-setup create --name MySetup --stock-mode fixed --stock-x 500 --stock-y 400 --stock-z 20
+    fusion-cam-setup edit --setup MySetup --stock-top 2 --flip-z
+    fusion-cam-setup delete --setup MySetup
+    fusion-cam-setup duplicate --setup MySetup --new-name MySetup2
+    fusion-cam-setup fix --setup MySetup             # fix WCS orientation
+    fusion-cam-setup params --setup MySetup          # dump all params
+
+Examples — Model / Fixture:
+    fusion-cam-setup set-model --setup MySetup --bodies TopPanel,SidePanel
+    fusion-cam-setup set-fixture --setup MySetup --fixtures Clamp1,Clamp2
+    fusion-cam-setup derive-body --source /path/to.f3d --body BodyName
+    fusion-cam-setup keepout --setup MySetup --corner-size 20
+
+Examples — Tools:
+    fusion-cam-setup tools                           # list all tools
+    fusion-cam-setup tools --type flat_end           # filter by type
+    fusion-cam-setup create-tool --type "flat end mill" --diameter 6 --flutes 2
+
+Examples — Library Management:
+    fusion-cam-setup library list                    # list persistent library
+    fusion-cam-setup library add --type "flat end mill" --diameter 12.7 --flutes 2
+    fusion-cam-setup library add-from-op --operation "Flat2"
+    fusion-cam-setup library import-doc              # bulk import from document
+    fusion-cam-setup library remove --index 0
+    fusion-cam-setup library export --output ~/my-tools.json
+    fusion-cam-setup library import-file --input ~/my-tools.json
+
+Examples — Operations Query:
+    fusion-cam-setup operations                      # list all operations
+    fusion-cam-setup operations --setup MySetup --show-params
+    fusion-cam-setup silhouette --operation "2D Contour"
+
+Examples — Post-processing & Simulation:
+    fusion-cam-setup generate                        # generate all toolpaths
+    fusion-cam-setup generate --setup MySetup        # generate for one setup
+    fusion-cam-setup post --output /path/to/output --setup MySetup
+    fusion-cam-setup simulate --setup MySetup
+    fusion-cam-setup cycle-time --setup MySetup
+
+Examples — Workspace:
+    fusion-cam-setup switch                          # switch to Manufacturing
+    fusion-cam-setup info                            # manufacturing overview
+"""
+
+import argparse
+import json
+import sys
+import urllib.request
+import urllib.error
+
+BRIDGE = "http://localhost:8080"
+
+
+def call(endpoint, body=None):
+    data = json.dumps(body or {}).encode()
+    req = urllib.request.Request(
+        f"{BRIDGE}{endpoint}", data=data,
+        headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.URLError as e:
+        return {"error": True, "message": f"Cannot connect to Fusion bridge: {e}"}
+    except Exception as e:
+        return {"error": True, "message": str(e)}
+
+
+def out(data):
+    print(json.dumps(data, indent=2))
+
+
+# ── Setup Management ──────────────────────────────────────────
+
+def cmd_list(args):
+    payload = {}
+    if args.show_params:
+        payload["show_params"] = True
+    out(call("/cam_list_setups", payload))
+
+
+def cmd_create(args):
+    payload = {"name": args.name}
+    if args.stock_mode:
+        payload["stock_mode"] = args.stock_mode
+    if args.stock_x:
+        payload["stock_x"] = args.stock_x
+    if args.stock_y:
+        payload["stock_y"] = args.stock_y
+    if args.stock_z:
+        payload["stock_z"] = args.stock_z
+    if args.stock_offset is not None:
+        payload["stock_offset"] = args.stock_offset
+    if args.stock_top is not None:
+        payload["stock_top"] = args.stock_top
+    if args.stock_point:
+        payload["stock_point"] = args.stock_point
+    if args.no_flip_z:
+        payload["flip_z"] = False
+    out(call("/cam_create_setup", payload))
+
+
+def cmd_edit(args):
+    payload = {"setup": args.setup}
+    if args.stock_mode:
+        payload["stock_mode"] = args.stock_mode
+    if args.stock_x:
+        payload["stock_x"] = args.stock_x
+    if args.stock_y:
+        payload["stock_y"] = args.stock_y
+    if args.stock_z:
+        payload["stock_z"] = args.stock_z
+    if args.stock_offset is not None:
+        payload["stock_offset"] = args.stock_offset
+    if args.stock_top is not None:
+        payload["stock_top"] = args.stock_top
+    if args.stock_point:
+        payload["stock_point"] = args.stock_point
+    if args.flip_z:
+        payload["flip_z"] = True
+    if args.no_flip_z:
+        payload["flip_z"] = False
+    if args.params:
+        p = {}
+        for item in args.params:
+            k, v = item.split("=", 1)
+            p[k] = v
+        payload["params"] = p
+    out(call("/cam_edit_setup", payload))
+
+
+def cmd_delete(args):
+    out(call("/cam_delete_setup", {"setup": args.setup}))
+
+
+def cmd_duplicate(args):
+    payload = {"setup": args.setup}
+    if args.new_name:
+        payload["new_name"] = args.new_name
+    out(call("/cam_duplicate_setup", payload))
+
+
+def cmd_fix(args):
+    payload = {"setup": args.setup}
+    if args.stock_offset is not None:
+        payload["stock_offset"] = args.stock_offset
+    if args.stock_top is not None:
+        payload["stock_top"] = args.stock_top
+    out(call("/cam_fix_setup", payload))
+
+
+def cmd_params(args):
+    payload = {"setup": args.setup}
+    if args.filter:
+        payload["filter"] = args.filter
+    out(call("/cam_get_setup_params", payload))
+
+
+# ── Model / Fixture ──────────────────────────────────────────
+
+def cmd_set_model(args):
+    bodies = [b.strip() for b in args.bodies.split(",")]
+    payload = {"bodies": bodies}
+    if args.setup:
+        payload["setup"] = args.setup
+    out(call("/cam_set_model", payload))
+
+
+def cmd_set_fixture(args):
+    fixtures = [f.strip() for f in args.fixtures.split(",")]
+    payload = {"fixtures": fixtures}
+    if args.setup:
+        payload["setup"] = args.setup
+    out(call("/cam_set_fixture", payload))
+
+
+def cmd_derive_body(args):
+    payload = {"source_path": args.source, "body_name": args.body}
+    if args.new_name:
+        payload["new_name"] = args.new_name
+    out(call("/cam_derive_body", payload))
+
+
+def cmd_keepout(args):
+    payload = {"corner_size": args.corner_size}
+    if args.setup:
+        payload["setup"] = args.setup
+    out(call("/cam_create_keepout", payload))
+
+
+# ── Tools ────────────────────────────────────────────────────
+
+def cmd_tools(args):
+    payload = {}
+    if args.type:
+        payload["type"] = args.type
+    out(call("/cam_list_tools", payload))
+
+
+def cmd_create_tool(args):
+    payload = {"type": args.type, "diameter": args.diameter}
+    if args.flutes:
+        payload["flutes"] = args.flutes
+    if args.flute_length:
+        payload["flute_length"] = args.flute_length
+    if args.overall_length:
+        payload["overall_length"] = args.overall_length
+    if args.tool_number:
+        payload["tool_number"] = args.tool_number
+    if args.taper_angle:
+        payload["taper_angle"] = args.taper_angle
+    if args.tip_angle:
+        payload["tip_angle"] = args.tip_angle
+    if args.corner_radius:
+        payload["corner_radius"] = args.corner_radius
+    if args.description:
+        payload["description"] = args.description
+    if args.no_library:
+        payload["add_to_library"] = False
+    out(call("/cam_create_tool", payload))
+
+
+# ── Library Management ───────────────────────────────────────
+
+def cmd_library(args):
+    action = args.library_action
+    if action == "list":
+        out(call("/cam_library_list", {}))
+    elif action == "add":
+        payload = {"type": args.type, "diameter": args.diameter}
+        if args.flutes:
+            payload["flutes"] = args.flutes
+        if args.flute_length:
+            payload["flute_length"] = args.flute_length
+        if args.overall_length:
+            payload["overall_length"] = args.overall_length
+        if args.tool_number:
+            payload["tool_number"] = args.tool_number
+        if args.taper_angle:
+            payload["taper_angle"] = args.taper_angle
+        if args.tip_angle:
+            payload["tip_angle"] = args.tip_angle
+        if args.corner_radius:
+            payload["corner_radius"] = args.corner_radius
+        if args.description:
+            payload["description"] = args.description
+        out(call("/cam_library_add", payload))
+    elif action == "add-from-op":
+        out(call("/cam_library_add", {"from_operation": args.operation}))
+    elif action == "import-doc":
+        out(call("/cam_library_import_doc", {}))
+    elif action == "remove":
+        out(call("/cam_library_remove", {"index": args.index}))
+    elif action == "export":
+        out(call("/cam_library_export", {"output": args.output}))
+    elif action == "import-file":
+        out(call("/cam_library_import_file", {"input": args.input}))
+    else:
+        print(f"Unknown library action: {action}", file=sys.stderr)
+        sys.exit(1)
+
+
+# ── Operations Query ─────────────────────────────────────────
+
+def cmd_operations(args):
+    payload = {}
+    if args.setup:
+        payload["setup"] = args.setup
+    if args.show_params:
+        payload["show_params"] = True
+    out(call("/cam_list_operations", payload))
+
+
+def cmd_silhouette(args):
+    out(call("/cam_select_silhouette", {"operation": args.operation}))
+
+
+# ── Post-processing & Simulation ─────────────────────────────
+
+def cmd_generate(args):
+    payload = {}
+    if args.setup:
+        payload["setup"] = args.setup
+    if args.timeout:
+        payload["timeout"] = args.timeout
+    out(call("/cam_generate", payload))
+
+
+def cmd_post(args):
+    payload = {"output_path": args.output}
+    if args.setup:
+        payload["setup"] = args.setup
+    if args.post_processor:
+        payload["post_processor"] = args.post_processor
+    if args.open_editor:
+        payload["open_editor"] = True
+    out(call("/cam_post_process", payload))
+
+
+def cmd_simulate(args):
+    payload = {}
+    if args.setup:
+        payload["setup"] = args.setup
+    out(call("/cam_simulate", payload))
+
+
+def cmd_cycle_time(args):
+    payload = {}
+    if args.setup:
+        payload["setup"] = args.setup
+    out(call("/cam_cycle_time", payload))
+
+
+# ── Workspace ────────────────────────────────────────────────
+
+def cmd_switch(args):
+    out(call("/cam_switch", {}))
+
+
+def cmd_info(args):
+    out(call("/cam_info", {}))
+
+
+# ── argparse setup ────────────────────────────────────────────
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        prog="fusion-cam-setup",
+        description="Fusion 360 CAM setup / tools / post-processing CLI")
+    sub = parser.add_subparsers(dest="command")
+
+    # Setup management
+    p = sub.add_parser("list", help="List all CAM setups")
+    p.add_argument("--show-params", action="store_true")
+    p.set_defaults(func=cmd_list)
+
+    p = sub.add_parser("create", help="Create a milling setup")
+    p.add_argument("--name", default="Setup")
+    p.add_argument("--stock-mode", choices=["relative", "fixed"])
+    p.add_argument("--stock-x", type=float)
+    p.add_argument("--stock-y", type=float)
+    p.add_argument("--stock-z", type=float)
+    p.add_argument("--stock-offset", type=float)
+    p.add_argument("--stock-top", type=float)
+    p.add_argument("--stock-point", choices=["center", "top-center", "corner", "bottom-center"])
+    p.add_argument("--no-flip-z", action="store_true")
+    p.set_defaults(func=cmd_create)
+
+    p = sub.add_parser("edit", help="Edit an existing setup")
+    p.add_argument("--setup", required=True)
+    p.add_argument("--stock-mode", choices=["relative", "fixed"])
+    p.add_argument("--stock-x", type=float)
+    p.add_argument("--stock-y", type=float)
+    p.add_argument("--stock-z", type=float)
+    p.add_argument("--stock-offset", type=float)
+    p.add_argument("--stock-top", type=float)
+    p.add_argument("--stock-point", choices=["center", "top-center", "corner", "bottom-center"])
+    p.add_argument("--flip-z", action="store_true")
+    p.add_argument("--no-flip-z", action="store_true")
+    p.add_argument("--params", nargs="*", help="Raw params: key=value")
+    p.set_defaults(func=cmd_edit)
+
+    p = sub.add_parser("delete", help="Delete a setup")
+    p.add_argument("--setup", required=True)
+    p.set_defaults(func=cmd_delete)
+
+    p = sub.add_parser("duplicate", help="Clone a setup")
+    p.add_argument("--setup", required=True)
+    p.add_argument("--new-name")
+    p.set_defaults(func=cmd_duplicate)
+
+    p = sub.add_parser("fix", help="Fix WCS orientation")
+    p.add_argument("--setup", required=True)
+    p.add_argument("--stock-offset", type=float)
+    p.add_argument("--stock-top", type=float)
+    p.set_defaults(func=cmd_fix)
+
+    p = sub.add_parser("params", help="Dump all setup parameters")
+    p.add_argument("--setup", required=True)
+    p.add_argument("--filter", help="Filter prefix (e.g. job_, wcs_)")
+    p.set_defaults(func=cmd_params)
+
+    # Model / Fixture
+    p = sub.add_parser("set-model", help="Set machining model bodies")
+    p.add_argument("--bodies", required=True, help="Comma-separated body names")
+    p.add_argument("--setup")
+    p.set_defaults(func=cmd_set_model)
+
+    p = sub.add_parser("set-fixture", help="Set fixture bodies")
+    p.add_argument("--fixtures", required=True, help="Comma-separated body names")
+    p.add_argument("--setup")
+    p.set_defaults(func=cmd_set_fixture)
+
+    p = sub.add_parser("derive-body", help="Import body from external .f3d file")
+    p.add_argument("--source", required=True, help="Path to .f3d file")
+    p.add_argument("--body", required=True, help="Body name in source file")
+    p.add_argument("--new-name")
+    p.set_defaults(func=cmd_derive_body)
+
+    p = sub.add_parser("keepout", help="Create keep-out zone sketches")
+    p.add_argument("--corner-size", type=float, required=True, help="Corner zone size in mm")
+    p.add_argument("--setup")
+    p.set_defaults(func=cmd_keepout)
+
+    # Tools
+    p = sub.add_parser("tools", help="List available tools")
+    p.add_argument("--type", help="Filter: flat_end, ball_end, v_bit, drill, chamfer")
+    p.set_defaults(func=cmd_tools)
+
+    p = sub.add_parser("create-tool", help="Create a new cutting tool (added to library by default)")
+    p.add_argument("--type", required=True, help="e.g. 'flat end mill', 'ball end mill'")
+    p.add_argument("--diameter", type=float, required=True, help="Diameter in mm")
+    p.add_argument("--flutes", type=int)
+    p.add_argument("--flute-length", type=float)
+    p.add_argument("--overall-length", type=float)
+    p.add_argument("--tool-number", type=int)
+    p.add_argument("--taper-angle", type=float)
+    p.add_argument("--tip-angle", type=float)
+    p.add_argument("--corner-radius", type=float)
+    p.add_argument("--description")
+    p.add_argument("--no-library", action="store_true", help="Don't add to persistent library")
+    p.set_defaults(func=cmd_create_tool)
+
+    # Library management
+    p = sub.add_parser("library", help="Manage the persistent Local tool library")
+    lib_sub = p.add_subparsers(dest="library_action")
+
+    lib_sub.add_parser("list", help="List tools in the Local library")
+
+    lp = lib_sub.add_parser("add", help="Add a tool definition to the library")
+    lp.add_argument("--type", required=True, help="e.g. 'flat end mill', 'ball end mill'")
+    lp.add_argument("--diameter", type=float, required=True, help="Diameter in mm")
+    lp.add_argument("--flutes", type=int)
+    lp.add_argument("--flute-length", type=float)
+    lp.add_argument("--overall-length", type=float)
+    lp.add_argument("--tool-number", type=int)
+    lp.add_argument("--taper-angle", type=float)
+    lp.add_argument("--tip-angle", type=float)
+    lp.add_argument("--corner-radius", type=float)
+    lp.add_argument("--description")
+
+    lp = lib_sub.add_parser("add-from-op", help="Copy a tool from a document operation into the library")
+    lp.add_argument("--operation", required=True, help="Operation name to copy tool from")
+
+    lib_sub.add_parser("import-doc", help="Bulk import all unique tools from current document")
+
+    lp = lib_sub.add_parser("remove", help="Remove a tool by index")
+    lp.add_argument("--index", type=int, required=True, help="Tool index in library")
+
+    lp = lib_sub.add_parser("export", help="Export library to a JSON file")
+    lp.add_argument("--output", required=True, help="Output file path")
+
+    lp = lib_sub.add_parser("import-file", help="Import tools from a JSON file")
+    lp.add_argument("--input", required=True, help="Input JSON file path")
+
+    p.set_defaults(func=cmd_library)
+
+    # Operations query
+    p = sub.add_parser("operations", help="List all operations")
+    p.add_argument("--setup")
+    p.add_argument("--show-params", action="store_true")
+    p.set_defaults(func=cmd_operations)
+
+    p = sub.add_parser("silhouette", help="Set operation to silhouette geometry")
+    p.add_argument("--operation", required=True)
+    p.set_defaults(func=cmd_silhouette)
+
+    # Post-processing & Simulation
+    p = sub.add_parser("generate", help="Generate toolpaths")
+    p.add_argument("--setup")
+    p.add_argument("--timeout", type=int, default=120)
+    p.set_defaults(func=cmd_generate)
+
+    p = sub.add_parser("post", help="Post-process to G-code")
+    p.add_argument("--output", required=True, help="Output file/directory path")
+    p.add_argument("--setup")
+    p.add_argument("--post-processor", default="fanuc")
+    p.add_argument("--open-editor", action="store_true")
+    p.set_defaults(func=cmd_post)
+
+    p = sub.add_parser("simulate", help="Start simulation")
+    p.add_argument("--setup")
+    p.set_defaults(func=cmd_simulate)
+
+    p = sub.add_parser("cycle-time", help="Estimate machining cycle time")
+    p.add_argument("--setup")
+    p.set_defaults(func=cmd_cycle_time)
+
+    # Workspace
+    p = sub.add_parser("switch", help="Switch to Manufacturing workspace")
+    p.set_defaults(func=cmd_switch)
+
+    p = sub.add_parser("info", help="Manufacturing workspace overview")
+    p.set_defaults(func=cmd_info)
+
+    return parser
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

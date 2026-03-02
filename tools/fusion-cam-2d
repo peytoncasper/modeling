@@ -1,0 +1,422 @@
+#!/usr/bin/env python3
+"""CLI for Fusion 360 CAM 2D/2.5D milling operations.
+
+Wraps the FusionMCPBridge HTTP API at localhost:8080.
+All dimensions are in mm. All output is JSON.
+
+Examples — 2D Operations:
+    fusion-cam-2d contour --name "Profile Cut" --depth 19 --tabs --tab-height 3
+    fusion-cam-2d contour-advanced --name "V-Cut" --depth 8 --tool-diameter 25 --tool-angle 90
+    fusion-cam-2d pocket --name "Pocket" --depth 10 --stepover 3
+    fusion-cam-2d adaptive --name "Adaptive Clear" --depth 19 --optimal-load 3
+    fusion-cam-2d face --name "Face Top" --stepover 15
+    fusion-cam-2d engrave --name "Logo" --depth 0.5
+    fusion-cam-2d trace --name "V-Miter" --sketch MiterLines --depth 8 --stepdown 2
+    fusion-cam-2d drill --name "Holes" --depth 20 --peck-depth 5
+    fusion-cam-2d bore --name "Bore" --depth 15 --diameter 10
+    fusion-cam-2d slot --name "Slot" --depth 12
+    fusion-cam-2d chamfer --name "Edge Break" --chamfer-width 1
+    fusion-cam-2d miter-clearing --depth 18 --steps 4 --tool-diameter 6
+
+Examples — Operation Management:
+    fusion-cam-2d edit --operation "2D Contour" --depth 20 --stock-to-leave 0.5
+    fusion-cam-2d suppress --operation "2D Contour"
+    fusion-cam-2d unsuppress --operation "2D Contour"
+    fusion-cam-2d reorder --operation "2D Contour" --direction up
+    fusion-cam-2d delete --operation "2D Contour"
+"""
+
+import argparse
+import json
+import sys
+import urllib.request
+import urllib.error
+
+BRIDGE = "http://localhost:8080"
+
+
+def call(endpoint, body=None):
+    data = json.dumps(body or {}).encode()
+    req = urllib.request.Request(
+        f"{BRIDGE}{endpoint}", data=data,
+        headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.URLError as e:
+        return {"error": True, "message": f"Cannot connect to Fusion bridge: {e}"}
+    except Exception as e:
+        return {"error": True, "message": str(e)}
+
+
+def out(data):
+    print(json.dumps(data, indent=2))
+
+
+def _common_payload(args):
+    """Build payload from common arguments."""
+    payload = {}
+    if hasattr(args, "setup") and args.setup:
+        payload["setup"] = args.setup
+    if hasattr(args, "name") and args.name:
+        payload["name"] = args.name
+    if hasattr(args, "depth") and args.depth is not None:
+        payload["depth"] = args.depth
+    if hasattr(args, "stepdown") and args.stepdown is not None:
+        payload["stepdown"] = args.stepdown
+    if hasattr(args, "stock_to_leave") and args.stock_to_leave is not None:
+        payload["stock_to_leave"] = args.stock_to_leave
+    if hasattr(args, "floor_stock") and args.floor_stock is not None:
+        payload["floor_stock"] = args.floor_stock
+    if hasattr(args, "compensation") and args.compensation:
+        payload["compensation"] = args.compensation
+    if hasattr(args, "boundary") and args.boundary:
+        payload["boundary"] = args.boundary
+    if hasattr(args, "tool_number") and args.tool_number is not None:
+        payload["tool_number"] = args.tool_number
+    if hasattr(args, "tool_description") and args.tool_description:
+        payload["tool_description"] = args.tool_description
+    if hasattr(args, "tool_type") and args.tool_type:
+        payload["tool_type"] = args.tool_type
+    if hasattr(args, "sketch") and args.sketch:
+        payload["sketch"] = args.sketch
+    if hasattr(args, "ramp") and args.ramp:
+        payload["ramp"] = args.ramp
+    # Tabs
+    if hasattr(args, "tabs") and args.tabs:
+        payload["tabs"] = True
+    if hasattr(args, "tab_width") and args.tab_width is not None:
+        payload["tab_width"] = args.tab_width
+    if hasattr(args, "tab_height") and args.tab_height is not None:
+        payload["tab_height"] = args.tab_height
+    if hasattr(args, "tab_count") and args.tab_count is not None:
+        payload["tab_count"] = args.tab_count
+    # Heights
+    if hasattr(args, "clearance_height") and args.clearance_height is not None:
+        payload["clearance_height"] = args.clearance_height
+    if hasattr(args, "retract_height") and args.retract_height is not None:
+        payload["retract_height"] = args.retract_height
+    if hasattr(args, "feed_height") and args.feed_height is not None:
+        payload["feed_height"] = args.feed_height
+    return payload
+
+
+def _add_common_args(p):
+    """Add common arguments to a subparser."""
+    p.add_argument("--setup")
+    p.add_argument("--name")
+    p.add_argument("--depth", type=float)
+    p.add_argument("--stepdown", type=float)
+    p.add_argument("--stock-to-leave", type=float)
+    p.add_argument("--floor-stock", type=float)
+    p.add_argument("--compensation", choices=["left", "right", "center", "off"])
+    p.add_argument("--boundary", choices=["silhouette", "selection"])
+    p.add_argument("--tool-number", type=int)
+    p.add_argument("--tool-description", help="Substring match to disambiguate tools with same number")
+    p.add_argument("--tool-type")
+    p.add_argument("--sketch", help="Sketch name for geometry/pocket/contour selection")
+    p.add_argument("--ramp", choices=["helix", "plunge", "ramp", "profile"])
+    p.add_argument("--tabs", action="store_true")
+    p.add_argument("--tab-width", type=float)
+    p.add_argument("--tab-height", type=float)
+    p.add_argument("--tab-count", type=int)
+    p.add_argument("--clearance-height", type=float)
+    p.add_argument("--retract-height", type=float)
+    p.add_argument("--feed-height", type=float)
+
+
+# ── 2D Operations ────────────────────────────────────────────
+
+def cmd_contour(args):
+    out(call("/cam_2d_contour", _common_payload(args)))
+
+
+def cmd_contour_advanced(args):
+    payload = _common_payload(args)
+    if args.tool_diameter:
+        payload["tool_diameter"] = args.tool_diameter
+    if args.tool_angle:
+        payload["tool_angle"] = args.tool_angle
+    out(call("/cam_2d_contour_advanced", payload))
+
+
+def cmd_pocket(args):
+    payload = _common_payload(args)
+    if args.stepover:
+        payload["stepover"] = args.stepover
+    out(call("/cam_2d_pocket", payload))
+
+
+def cmd_adaptive(args):
+    payload = _common_payload(args)
+    if args.optimal_load:
+        payload["optimal_load"] = args.optimal_load
+    if args.both_ways:
+        payload["both_ways"] = True
+    out(call("/cam_2d_adaptive", payload))
+
+
+def cmd_face(args):
+    payload = _common_payload(args)
+    if args.stepover:
+        payload["stepover"] = args.stepover
+    out(call("/cam_2d_face", payload))
+
+
+def cmd_engrave(args):
+    payload = _common_payload(args)
+    if args.tolerance:
+        payload["tolerance"] = args.tolerance
+    out(call("/cam_2d_engrave", payload))
+
+
+def cmd_trace(args):
+    payload = _common_payload(args)
+    if args.sketch:
+        payload["sketch"] = args.sketch
+    if args.passes:
+        payload["passes"] = args.passes
+    out(call("/cam_2d_trace", payload))
+
+
+def cmd_drill(args):
+    payload = _common_payload(args)
+    if args.peck_depth:
+        payload["peck_depth"] = args.peck_depth
+    if args.dwell:
+        payload["dwell"] = args.dwell
+    if args.cycle:
+        payload["cycle"] = args.cycle
+    out(call("/cam_2d_drill", payload))
+
+
+def cmd_bore(args):
+    payload = _common_payload(args)
+    if args.diameter:
+        payload["diameter"] = args.diameter
+    out(call("/cam_2d_bore", payload))
+
+
+def cmd_slot(args):
+    out(call("/cam_2d_slot", _common_payload(args)))
+
+
+def cmd_chamfer(args):
+    payload = _common_payload(args)
+    if args.chamfer_width:
+        payload["chamfer_width"] = args.chamfer_width
+    if args.tip_offset is not None:
+        payload["tip_offset"] = args.tip_offset
+    out(call("/cam_2d_chamfer", payload))
+
+
+def cmd_miter_clearing(args):
+    payload = {}
+    if args.setup:
+        payload["setup"] = args.setup
+    if args.depth:
+        payload["depth"] = args.depth
+    if args.steps:
+        payload["steps"] = args.steps
+    if args.tool_diameter:
+        payload["tool_diameter"] = args.tool_diameter
+    if args.stock_for_finish:
+        payload["stock_for_finish"] = args.stock_for_finish
+    if args.miter_angle:
+        payload["miter_angle"] = args.miter_angle
+    if args.stepdown:
+        payload["stepdown"] = args.stepdown
+    out(call("/cam_2d_miter_clearing", payload))
+
+
+# ── Operation Management ─────────────────────────────────────
+
+def cmd_edit(args):
+    payload = {"operation": args.operation}
+    if args.new_name:
+        payload["new_name"] = args.new_name
+    if args.depth is not None:
+        payload["depth"] = args.depth
+    if args.stepdown is not None:
+        payload["stepdown"] = args.stepdown
+    if args.stock_to_leave is not None:
+        payload["stock_to_leave"] = args.stock_to_leave
+    if args.compensation:
+        payload["compensation"] = args.compensation
+    if args.params:
+        p = {}
+        for item in args.params:
+            k, v = item.split("=", 1)
+            p[k] = v
+        payload["params"] = p
+    out(call("/cam_2d_edit_op", payload))
+
+
+def cmd_read_params(args):
+    payload = {"operation": args.operation, "read_params": args.params}
+    out(call("/cam_2d_edit_op", payload))
+
+
+def cmd_duplicate(args):
+    payload = {"operation": args.operation}
+    if args.new_name:
+        payload["new_name"] = args.new_name
+    out(call("/cam_2d_duplicate_op", payload))
+
+
+def cmd_suppress(args):
+    out(call("/cam_2d_suppress_op", {"operation": args.operation, "suppress": True}))
+
+
+def cmd_unsuppress(args):
+    out(call("/cam_2d_suppress_op", {"operation": args.operation, "suppress": False}))
+
+
+def cmd_reorder(args):
+    out(call("/cam_2d_reorder_op", {"operation": args.operation, "direction": args.direction}))
+
+
+def cmd_delete(args):
+    out(call("/cam_2d_delete_op", {"operation": args.operation}))
+
+
+# ── argparse setup ────────────────────────────────────────────
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        prog="fusion-cam-2d",
+        description="Fusion 360 CAM 2D/2.5D milling operations CLI")
+    sub = parser.add_subparsers(dest="command")
+
+    # 2D contour
+    p = sub.add_parser("contour", help="2D contour (profile cut)")
+    _add_common_args(p)
+    p.set_defaults(func=cmd_contour)
+
+    # 2D contour advanced
+    p = sub.add_parser("contour-advanced", help="2D contour with full control")
+    _add_common_args(p)
+    p.add_argument("--tool-diameter", type=float)
+    p.add_argument("--tool-angle", type=float)
+    p.set_defaults(func=cmd_contour_advanced)
+
+    # 2D pocket
+    p = sub.add_parser("pocket", help="2D pocket (area clearance)")
+    _add_common_args(p)
+    p.add_argument("--stepover", type=float)
+    p.set_defaults(func=cmd_pocket)
+
+    # 2D adaptive
+    p = sub.add_parser("adaptive", help="2D adaptive clearing")
+    _add_common_args(p)
+    p.add_argument("--optimal-load", type=float, help="Optimal tool engagement in mm")
+    p.add_argument("--both-ways", action="store_true")
+    p.set_defaults(func=cmd_adaptive)
+
+    # Face
+    p = sub.add_parser("face", help="Facing operation")
+    _add_common_args(p)
+    p.add_argument("--stepover", type=float)
+    p.set_defaults(func=cmd_face)
+
+    # Engrave
+    p = sub.add_parser("engrave", help="Engrave operation")
+    _add_common_args(p)
+    p.add_argument("--tolerance", type=float, default=0.01)
+    p.set_defaults(func=cmd_engrave)
+
+    # Trace
+    p = sub.add_parser("trace", help="Trace (V-bit miter cuts)")
+    _add_common_args(p)
+    p.add_argument("--passes", type=int, help="Number of depth passes")
+    p.set_defaults(func=cmd_trace)
+
+    # Drill
+    p = sub.add_parser("drill", help="Drilling cycle")
+    _add_common_args(p)
+    p.add_argument("--peck-depth", type=float)
+    p.add_argument("--dwell", type=float, help="Dwell time in seconds")
+    p.add_argument("--cycle", choices=["drill", "peck", "deep_peck", "tap", "bore"])
+    p.set_defaults(func=cmd_drill)
+
+    # Bore
+    p = sub.add_parser("bore", help="Bore cycle")
+    _add_common_args(p)
+    p.add_argument("--diameter", type=float, help="Bore diameter in mm")
+    p.set_defaults(func=cmd_bore)
+
+    # Slot
+    p = sub.add_parser("slot", help="Slot milling")
+    _add_common_args(p)
+    p.set_defaults(func=cmd_slot)
+
+    # Chamfer
+    p = sub.add_parser("chamfer", help="2D chamfer deburring")
+    _add_common_args(p)
+    p.add_argument("--chamfer-width", type=float)
+    p.add_argument("--tip-offset", type=float)
+    p.set_defaults(func=cmd_chamfer)
+
+    # Miter clearing
+    p = sub.add_parser("miter-clearing", help="Terraced clearing for miter joints")
+    p.add_argument("--setup")
+    p.add_argument("--depth", type=float, default=18)
+    p.add_argument("--steps", type=int, default=4)
+    p.add_argument("--tool-diameter", type=float, default=6)
+    p.add_argument("--stock-for-finish", type=float, default=1.0)
+    p.add_argument("--miter-angle", type=float, default=45)
+    p.add_argument("--stepdown", type=float, default=4)
+    p.set_defaults(func=cmd_miter_clearing)
+
+    # Operation management
+    p = sub.add_parser("edit", help="Edit operation parameters")
+    p.add_argument("--operation", required=True)
+    p.add_argument("--new-name")
+    p.add_argument("--depth", type=float)
+    p.add_argument("--stepdown", type=float)
+    p.add_argument("--stock-to-leave", type=float)
+    p.add_argument("--compensation", choices=["left", "right", "center", "off"])
+    p.add_argument("--params", nargs="*", help="Raw params: key=value")
+    p.set_defaults(func=cmd_edit)
+
+    p = sub.add_parser("read-params", help="Read operation parameter values")
+    p.add_argument("--operation", required=True)
+    p.add_argument("--params", nargs="+", required=True, help="Parameter names to read")
+    p.set_defaults(func=cmd_read_params)
+
+    p = sub.add_parser("duplicate", help="Duplicate an operation with all settings")
+    p.add_argument("--operation", required=True)
+    p.add_argument("--new-name")
+    p.set_defaults(func=cmd_duplicate)
+
+    p = sub.add_parser("suppress", help="Suppress an operation")
+    p.add_argument("--operation", required=True)
+    p.set_defaults(func=cmd_suppress)
+
+    p = sub.add_parser("unsuppress", help="Unsuppress an operation")
+    p.add_argument("--operation", required=True)
+    p.set_defaults(func=cmd_unsuppress)
+
+    p = sub.add_parser("reorder", help="Reorder an operation")
+    p.add_argument("--operation", required=True)
+    p.add_argument("--direction", choices=["up", "down"], default="down")
+    p.set_defaults(func=cmd_reorder)
+
+    p = sub.add_parser("delete", help="Delete an operation")
+    p.add_argument("--operation", required=True)
+    p.set_defaults(func=cmd_delete)
+
+    return parser
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

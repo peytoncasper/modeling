@@ -2,11 +2,16 @@
 Fusion 360 MCP Bridge Add-in — slim orchestrator.
 
 Delegates handlers to domain modules:
-  - handlers_sketch  (complete sketch domain — 38 endpoints)
-  - handlers_cam     (CAM operations)
-  - handlers_model   (features, bodies, transforms, params, utility)
-  - handlers_nav     (STATE / PATCH / LOCAL_GRAPH)
-  - handlers_frame   (reference frame management)
+  - handlers_sketch        (complete sketch domain — 38 endpoints)
+  - handlers_solid         (features, bodies, transforms)
+  - handlers_construction  (planes, axes, points, measurements)
+  - handlers_camera        (viewport, screenshots, export)
+  - handlers_nav           (STATE / PATCH / LOCAL_GRAPH / frames)
+  - handlers_timeline      (parametric timeline)
+  - handlers_assembly      (components, joints, hierarchy)
+  - handlers_cam_setup     (CAM setups, tools, post-processing)
+  - handlers_cam_2d        (2D/2.5D milling operations)
+  - handlers_cam_3d        (3D surface machining operations)
 
 The HTTP server, custom-event thread marshaling, and lifecycle (run/stop)
 live here.  Individual handler logic lives in the domain modules.
@@ -110,6 +115,27 @@ except Exception as e:
     _log(f"handlers_assembly FAIL: {e}\n{traceback.format_exc()}")
     raise
 
+try:
+    from handlers_cam_setup import CAM_SETUP_ROUTES
+    _log(f"handlers_cam_setup: OK ({len(CAM_SETUP_ROUTES)} routes)")
+except Exception as e:
+    _log(f"handlers_cam_setup FAIL: {e}\n{traceback.format_exc()}")
+    raise
+
+try:
+    from handlers_cam_2d import CAM_2D_ROUTES
+    _log(f"handlers_cam_2d: OK ({len(CAM_2D_ROUTES)} routes)")
+except Exception as e:
+    _log(f"handlers_cam_2d FAIL: {e}\n{traceback.format_exc()}")
+    raise
+
+try:
+    from handlers_cam_3d import CAM_3D_ROUTES
+    _log(f"handlers_cam_3d: OK ({len(CAM_3D_ROUTES)} routes)")
+except Exception as e:
+    _log(f"handlers_cam_3d FAIL: {e}\n{traceback.format_exc()}")
+    raise
+
 # Frame manager + nav state modules (needed for run() initialization)
 try:
     from frame_manager import FrameManager
@@ -208,83 +234,141 @@ class CommandEventHandler(adsk.core.CustomEventHandler):
 
 ROUTES = {}
 
-# Sketch routes (38 endpoints)
-ROUTES.update(SKETCH_ROUTES)
+_HANDLER_MODULES = {
+    "handlers_sketch":       ("SKETCH_ROUTES",),
+    "handlers_solid":        ("SOLID_ROUTES",),
+    "handlers_construction": ("CONSTRUCTION_ROUTES",),
+    "handlers_camera":       ("CAMERA_ROUTES",),
+    "handlers_nav":          ("NAV_ROUTES",),
+    "handlers_timeline":     ("TIMELINE_ROUTES",),
+    "handlers_assembly":     ("ASSEMBLY_ROUTES",),
+    "handlers_cam_setup":    ("CAM_SETUP_ROUTES",),
+    "handlers_cam_2d":       ("CAM_2D_ROUTES",),
+    "handlers_cam_3d":       ("CAM_3D_ROUTES",),
+}
 
-# Solid/body routes
-ROUTES.update(SOLID_ROUTES)
+_SUPPORT_MODULES = [
+    "bridge_helpers", "entity_resolver", "frame_manager",
+    "cad_state", "graph_extractor", "patch_emitter",
+    "action_executor", "_legacy_handlers",
+]
 
-# Construction / reference geometry routes
-ROUTES.update(CONSTRUCTION_ROUTES)
+def _build_routes():
+    """(Re)build the master route table from all handler modules."""
+    ROUTES.clear()
 
-# Camera / viewport / screenshot routes
-ROUTES.update(CAMERA_ROUTES)
+    for mod_name, route_names in _HANDLER_MODULES.items():
+        mod = sys.modules.get(mod_name)
+        if mod:
+            for rn in route_names:
+                ROUTES.update(getattr(mod, rn, {}))
 
-# Navigation / indexing (STATE, PATCH, LOCAL_GRAPH, frames, entity resolver, actions)
-ROUTES.update(NAV_ROUTES)
+    # Legacy backward-compat aliases
+    if "handlers_timeline" in sys.modules:
+        tr = getattr(sys.modules["handlers_timeline"], "TIMELINE_ROUTES", {})
+        for old, new in [("/undo", "/timeline_undo"), ("/redo", "/timeline_redo"),
+                         ("/get_timeline", "/timeline_list"),
+                         ("/get_feature_parameters", "/timeline_feature_params"),
+                         ("/edit_feature_parameter", "/timeline_edit_param")]:
+            if new in tr:
+                ROUTES[old] = tr[new]
 
-# Timeline (22 endpoints — query, navigate, modify, group, analysis)
-ROUTES.update(TIMELINE_ROUTES)
+    if "handlers_cam_2d" in sys.modules:
+        c2 = getattr(sys.modules["handlers_cam_2d"], "CAM_2D_ROUTES", {})
+        for old, new in [("/cam_create_2d_contour", "/cam_2d_contour"),
+                         ("/cam_create_2d_pocket", "/cam_2d_pocket"),
+                         ("/cam_create_engrave", "/cam_2d_engrave"),
+                         ("/cam_create_trace", "/cam_2d_trace"),
+                         ("/cam_create_face", "/cam_2d_face"),
+                         ("/cam_create_contour_advanced", "/cam_2d_contour_advanced"),
+                         ("/cam_create_miter_clearing", "/cam_2d_miter_clearing")]:
+            if new in c2:
+                ROUTES[old] = c2[new]
 
-# Assembly / component / organization (20 endpoints)
-ROUTES.update(ASSEMBLY_ROUTES)
+    if "handlers_cam_setup" in sys.modules:
+        cs = getattr(sys.modules["handlers_cam_setup"], "CAM_SETUP_ROUTES", {})
+        if "/cam_generate" in cs:
+            ROUTES["/cam_generate_all"] = cs["/cam_generate"]
 
-# Legacy backward-compat aliases for old timeline routes
-ROUTES.update({
-    "/undo": TIMELINE_ROUTES["/timeline_undo"],
-    "/redo": TIMELINE_ROUTES["/timeline_redo"],
-    "/get_timeline": TIMELINE_ROUTES["/timeline_list"],
-    "/get_feature_parameters": TIMELINE_ROUTES["/timeline_feature_params"],
-    "/edit_feature_parameter": TIMELINE_ROUTES["/timeline_edit_param"],
-})
+    ROUTES.update({
+        "/ping": _lh.handle_ping,
+        "/info": _lh.handle_info,
+        "/new_document": _lh.handle_new_document,
+        "/open_document": _lh.handle_open_document,
+        "/save": _lh.handle_save,
+        "/get_all_parts": _lh.handle_get_all_parts,
+        "/create_parameter": _lh.handle_create_parameter,
+        "/modify_parameter": _lh.handle_modify_parameter,
+        "/list_parameters": _lh.handle_list_parameters,
+        "/list_all_parameters": _lh.handle_list_all_parameters,
+        "/apply_appearance": _lh.handle_apply_appearance,
+        "/list_appearances": _lh.handle_list_appearances,
+        "/switch_workspace": _lh.handle_switch_workspace,
+    })
 
-# Legacy routes — document, components, params, appearance, utility, CAM.
-# These remain in _legacy_handlers.py and will be incrementally extracted.
-ROUTES.update({
-    # Document
-    "/ping": _lh.handle_ping,
-    "/info": _lh.handle_info,
-    "/new_document": _lh.handle_new_document,
-    "/open_document": _lh.handle_open_document,
-    "/save": _lh.handle_save,
-    "/get_all_parts": _lh.handle_get_all_parts,
+    ROUTES["/reload"] = _handle_reload
 
-    # Parameters
-    "/create_parameter": _lh.handle_create_parameter,
-    "/modify_parameter": _lh.handle_modify_parameter,
-    "/list_parameters": _lh.handle_list_parameters,
-    "/list_all_parameters": _lh.handle_list_all_parameters,
 
-    # Appearance
-    "/apply_appearance": _lh.handle_apply_appearance,
-    "/list_appearances": _lh.handle_list_appearances,
+def _handle_reload(body):
+    """Hot-reload all handler modules and rebuild routes."""
+    reloaded = []
+    errors = []
 
-    # Utility
-    "/switch_workspace": _lh.handle_switch_workspace,
+    # Capture live state from bridge_helpers BEFORE reload wipes it
+    saved = {}
+    for attr in ("_app", "frame_manager", "entity_resolver", "cad_state",
+                 "graph_extractor", "patch_emitter", "action_executor"):
+        saved[attr] = getattr(_bh, attr, None)
 
-    # CAM
-    "/cam_list_setups": _lh.handle_cam_list_setups,
-    "/cam_create_setup": _lh.handle_cam_create_setup,
-    "/cam_fix_setup": _lh.handle_cam_fix_setup,
-    "/cam_list_tools": _lh.handle_cam_list_tools,
-    "/cam_create_2d_contour": _lh.handle_cam_create_2d_contour,
-    "/cam_create_2d_pocket": _lh.handle_cam_create_2d_pocket,
-    "/cam_create_engrave": _lh.handle_cam_create_engrave,
-    "/cam_create_trace": _lh.handle_cam_create_trace,
-    "/cam_generate_all": _lh.handle_cam_generate_all,
-    "/cam_post_process": _lh.handle_cam_post_process,
-    "/cam_list_operations": _lh.handle_cam_list_operations,
-    "/cam_simulate": _lh.handle_cam_simulate,
-    "/cam_select_silhouette": _lh.handle_cam_select_silhouette,
-    "/cam_derive_body": _lh.handle_cam_derive_body,
-    "/cam_create_face": _lh.handle_cam_create_face,
-    "/cam_create_contour_advanced": _lh.handle_cam_create_contour_advanced,
-    "/cam_create_miter_clearing": _lh.handle_cam_create_miter_clearing,
-    "/cam_create_keepout": _lh.handle_cam_create_keepout,
-    "/cam_set_model": _lh.handle_cam_set_model,
-    "/cam_get_setup_params": _lh.handle_cam_get_setup_params,
-    "/cam_set_fixture": _lh.handle_cam_set_fixture,
-})
+    for mod_name in _SUPPORT_MODULES:
+        if mod_name in sys.modules:
+            try:
+                _il.reload(sys.modules[mod_name])
+                reloaded.append(mod_name)
+            except Exception as e:
+                errors.append(f"{mod_name}: {e}")
+
+    for mod_name in _HANDLER_MODULES:
+        if mod_name in sys.modules:
+            try:
+                _il.reload(sys.modules[mod_name])
+                reloaded.append(mod_name)
+            except Exception as e:
+                errors.append(f"{mod_name}: {e}")
+
+    # Re-inject live state into freshly reloaded modules
+    _bh.set_app(app or saved.get("_app"))
+    fm = saved.get("frame_manager")
+    if fm:
+        _bh.set_frame_manager(fm)
+    er = saved.get("entity_resolver")
+    cs = saved.get("cad_state")
+    ge = saved.get("graph_extractor")
+    pe = saved.get("patch_emitter")
+    ae = saved.get("action_executor")
+    if er and cs and ge and pe and ae:
+        _bh.set_nav_state(er, cs, ge, pe, ae)
+
+    lh = sys.modules.get("_legacy_handlers")
+    if lh:
+        lh.app = app
+        lh.ui = ui
+        if fm: lh.frame_manager = fm
+        for attr, val in [("entity_resolver", er), ("cad_state", cs),
+                          ("graph_extractor", ge), ("patch_emitter", pe),
+                          ("action_executor", ae)]:
+            if val:
+                setattr(lh, attr, val)
+
+    _build_routes()
+    return {
+        "success": len(errors) == 0,
+        "reloaded": reloaded,
+        "errors": errors,
+        "total_routes": len(ROUTES),
+    }
+
+_build_routes()
 
 
 # ── Server lifecycle ──────────────────────────────────────────

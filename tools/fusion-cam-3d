@@ -1,0 +1,382 @@
+#!/usr/bin/env python3
+"""CLI for Fusion 360 CAM 3D milling operations.
+
+Wraps the FusionMCPBridge HTTP API at localhost:8080.
+All dimensions are in mm. All output is JSON.
+
+Examples — 3D Roughing:
+    fusion-cam-3d adaptive --name "Rough" --stepdown 3 --optimal-load 3
+    fusion-cam-3d pocket --name "3D Pocket" --stepdown 2
+
+Examples — 3D Finishing (basic license):
+    fusion-cam-3d parallel --name "Finish" --stepover 0.5 --pass-angle 45
+    fusion-cam-3d horizontal --name "Flat Areas"
+    fusion-cam-3d radial --name "Radial" --center 0,0
+    fusion-cam-3d spiral --name "Spiral"
+
+Examples — 3D Finishing (requires Manufacturing Extension):
+    fusion-cam-3d scallop --name "Scallop" --scallop-height 0.1
+    fusion-cam-3d pencil --name "Corners"
+    fusion-cam-3d contour --name "Waterline" --stepdown 0.5
+    fusion-cam-3d steep-shallow --name "Combined" --threshold-angle 45
+    fusion-cam-3d morphed-spiral --name "Morphed"
+    fusion-cam-3d flow --name "Flow"
+
+Examples — Common Options:
+    fusion-cam-3d parallel --stock-to-leave 0 --stepover 0.3 --tool-number 5
+    fusion-cam-3d adaptive --stock-to-leave 0.5 --axial-stock 0.2 --rest-machining
+    fusion-cam-3d parallel --top-height -0.5 --top-from "stock top" --bottom-from "stock bottom"
+
+Examples — Operation Management:
+    fusion-cam-3d edit --operation "Parallel" --stepover 0.3
+    fusion-cam-3d read-params --operation "Parallel" --params topHeight_mode topHeight_offset useRestMachining
+    fusion-cam-3d duplicate --operation "Adaptive1" --new-name "Finish Pass"
+    fusion-cam-3d suppress --operation "Scallop"
+    fusion-cam-3d delete --operation "Flow"
+"""
+
+import argparse
+import json
+import sys
+import urllib.request
+import urllib.error
+
+BRIDGE = "http://localhost:8080"
+
+EXTENSION_OPS = {"scallop", "pencil", "contour", "steep-shallow", "morphed-spiral", "flow"}
+
+
+def call(endpoint, body=None):
+    data = json.dumps(body or {}).encode()
+    req = urllib.request.Request(
+        f"{BRIDGE}{endpoint}", data=data,
+        headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.URLError as e:
+        return {"error": True, "message": f"Cannot connect to Fusion bridge: {e}"}
+    except Exception as e:
+        return {"error": True, "message": str(e)}
+
+
+def out(data):
+    print(json.dumps(data, indent=2))
+
+
+def _common_payload(args):
+    payload = {}
+    if hasattr(args, "setup") and args.setup:
+        payload["setup"] = args.setup
+    if hasattr(args, "name") and args.name:
+        payload["name"] = args.name
+    if hasattr(args, "stock_to_leave") and args.stock_to_leave is not None:
+        payload["stock_to_leave"] = args.stock_to_leave
+    if hasattr(args, "axial_stock") and args.axial_stock is not None:
+        payload["axial_stock_to_leave"] = args.axial_stock
+    if hasattr(args, "stepover") and args.stepover is not None:
+        payload["stepover"] = args.stepover
+    if hasattr(args, "stepdown") and args.stepdown is not None:
+        payload["stepdown"] = args.stepdown
+    if hasattr(args, "tolerance") and args.tolerance is not None:
+        payload["tolerance"] = args.tolerance
+    if hasattr(args, "boundary") and args.boundary:
+        payload["boundary"] = args.boundary
+    if hasattr(args, "tool_number") and args.tool_number is not None:
+        payload["tool_number"] = args.tool_number
+    if hasattr(args, "tool_description") and args.tool_description:
+        payload["tool_description"] = args.tool_description
+    if hasattr(args, "tool_type") and args.tool_type:
+        payload["tool_type"] = args.tool_type
+    if hasattr(args, "rest_machining") and args.rest_machining:
+        payload["rest_machining"] = True
+    if hasattr(args, "clearance_height") and args.clearance_height is not None:
+        payload["clearance_height"] = args.clearance_height
+    if hasattr(args, "retract_height") and args.retract_height is not None:
+        payload["retract_height"] = args.retract_height
+    if hasattr(args, "top_height") and args.top_height is not None:
+        payload["top_height"] = args.top_height
+    if hasattr(args, "top_from") and args.top_from:
+        payload["top_from"] = args.top_from
+    if hasattr(args, "bottom_height") and args.bottom_height is not None:
+        payload["bottom_height"] = args.bottom_height
+    if hasattr(args, "bottom_from") and args.bottom_from:
+        payload["bottom_from"] = args.bottom_from
+    return payload
+
+
+def _add_common_args(p):
+    p.add_argument("--setup")
+    p.add_argument("--name")
+    p.add_argument("--stock-to-leave", type=float)
+    p.add_argument("--axial-stock", type=float, help="Axial stock to leave (mm)")
+    p.add_argument("--stepover", type=float)
+    p.add_argument("--stepdown", type=float)
+    p.add_argument("--tolerance", type=float)
+    p.add_argument("--boundary", choices=["silhouette", "selection"])
+    p.add_argument("--tool-number", type=int)
+    p.add_argument("--tool-description", help="Substring match to disambiguate tools with same number")
+    p.add_argument("--tool-type")
+    p.add_argument("--rest-machining", action="store_true")
+    p.add_argument("--clearance-height", type=float)
+    p.add_argument("--retract-height", type=float)
+    p.add_argument("--top-height", type=float)
+    p.add_argument("--top-from", help="Top height reference: 'stock top', 'model top'")
+    p.add_argument("--bottom-height", type=float)
+    p.add_argument("--bottom-from", help="Bottom height reference: 'stock bottom', 'model bottom'")
+
+
+# ── 3D Roughing ──────────────────────────────────────────────
+
+def cmd_adaptive(args):
+    payload = _common_payload(args)
+    if args.optimal_load:
+        payload["optimal_load"] = args.optimal_load
+    if args.both_ways:
+        payload["both_ways"] = True
+    if args.flat_area_detection:
+        payload["flat_area_detection"] = True
+    out(call("/cam_3d_adaptive", payload))
+
+
+def cmd_pocket(args):
+    payload = _common_payload(args)
+    if args.direction:
+        payload["direction"] = args.direction
+    out(call("/cam_3d_pocket", payload))
+
+
+# ── 3D Finishing ─────────────────────────────────────────────
+
+def cmd_parallel(args):
+    payload = _common_payload(args)
+    if args.pass_angle is not None:
+        payload["pass_angle"] = args.pass_angle
+    if args.direction:
+        payload["direction"] = args.direction
+    out(call("/cam_3d_parallel", payload))
+
+
+def cmd_scallop(args):
+    payload = _common_payload(args)
+    if args.scallop_height is not None:
+        payload["scallop_height"] = args.scallop_height
+    out(call("/cam_3d_scallop", payload))
+
+
+def cmd_pencil(args):
+    out(call("/cam_3d_pencil", _common_payload(args)))
+
+
+def cmd_contour(args):
+    out(call("/cam_3d_contour", _common_payload(args)))
+
+
+def cmd_steep_shallow(args):
+    payload = _common_payload(args)
+    if args.threshold_angle is not None:
+        payload["threshold_angle"] = args.threshold_angle
+    if args.steep_stepdown is not None:
+        payload["steep_stepdown"] = args.steep_stepdown
+    if args.shallow_stepover is not None:
+        payload["shallow_stepover"] = args.shallow_stepover
+    out(call("/cam_3d_steep_shallow", payload))
+
+
+def cmd_horizontal(args):
+    out(call("/cam_3d_horizontal", _common_payload(args)))
+
+
+def cmd_radial(args):
+    payload = _common_payload(args)
+    if args.center:
+        parts = [float(x.strip()) for x in args.center.split(",")]
+        payload["center"] = parts
+    out(call("/cam_3d_radial", payload))
+
+
+def cmd_spiral(args):
+    out(call("/cam_3d_spiral", _common_payload(args)))
+
+
+def cmd_morphed_spiral(args):
+    out(call("/cam_3d_morphed_spiral", _common_payload(args)))
+
+
+def cmd_flow(args):
+    out(call("/cam_3d_flow", _common_payload(args)))
+
+
+# ── Operation Management ─────────────────────────────────────
+
+def cmd_edit(args):
+    payload = {"operation": args.operation}
+    if args.new_name:
+        payload["new_name"] = args.new_name
+    if args.stock_to_leave is not None:
+        payload["stock_to_leave"] = args.stock_to_leave
+    if args.stepover is not None:
+        payload["stepover"] = args.stepover
+    if args.stepdown is not None:
+        payload["stepdown"] = args.stepdown
+    if args.tolerance is not None:
+        payload["tolerance"] = args.tolerance
+    if args.params:
+        p = {}
+        for item in args.params:
+            k, v = item.split("=", 1)
+            p[k] = v
+        payload["params"] = p
+    out(call("/cam_3d_edit_op", payload))
+
+
+def cmd_read_params(args):
+    payload = {"operation": args.operation, "read_params": args.params}
+    out(call("/cam_3d_edit_op", payload))
+
+
+def cmd_duplicate(args):
+    payload = {"operation": args.operation}
+    if args.new_name:
+        payload["new_name"] = args.new_name
+    out(call("/cam_3d_duplicate_op", payload))
+
+
+def cmd_suppress(args):
+    out(call("/cam_3d_suppress_op", {"operation": args.operation, "suppress": True}))
+
+
+def cmd_unsuppress(args):
+    out(call("/cam_3d_suppress_op", {"operation": args.operation, "suppress": False}))
+
+
+def cmd_delete(args):
+    out(call("/cam_3d_delete_op", {"operation": args.operation}))
+
+
+# ── argparse setup ────────────────────────────────────────────
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        prog="fusion-cam-3d",
+        description="Fusion 360 CAM 3D milling operations CLI")
+    sub = parser.add_subparsers(dest="command")
+
+    # 3D Adaptive
+    p = sub.add_parser("adaptive", help="3D adaptive clearing")
+    _add_common_args(p)
+    p.add_argument("--optimal-load", type=float, help="Optimal tool engagement (mm)")
+    p.add_argument("--both-ways", action="store_true")
+    p.add_argument("--flat-area-detection", action="store_true")
+    p.set_defaults(func=cmd_adaptive)
+
+    # 3D Pocket
+    p = sub.add_parser("pocket", help="3D pocket clearing")
+    _add_common_args(p)
+    p.add_argument("--direction", choices=["climb", "conventional", "both"])
+    p.set_defaults(func=cmd_pocket)
+
+    # Parallel
+    p = sub.add_parser("parallel", help="Parallel (raster) finishing")
+    _add_common_args(p)
+    p.add_argument("--pass-angle", type=float, help="Pass angle in degrees")
+    p.add_argument("--direction", choices=["climb", "conventional", "both"])
+    p.set_defaults(func=cmd_parallel)
+
+    # Scallop [Extension]
+    p = sub.add_parser("scallop", help="Scallop finishing [Extension]")
+    _add_common_args(p)
+    p.add_argument("--scallop-height", type=float, help="Max scallop height (mm)")
+    p.set_defaults(func=cmd_scallop)
+
+    # Pencil [Extension]
+    p = sub.add_parser("pencil", help="Pencil finishing (inside corners) [Extension]")
+    _add_common_args(p)
+    p.set_defaults(func=cmd_pencil)
+
+    # 3D Contour [Extension]
+    p = sub.add_parser("contour", help="3D contour (waterline / Z-level) [Extension]")
+    _add_common_args(p)
+    p.set_defaults(func=cmd_contour)
+
+    # Steep & Shallow [Extension]
+    p = sub.add_parser("steep-shallow", help="Steep & shallow combined strategy [Extension]")
+    _add_common_args(p)
+    p.add_argument("--threshold-angle", type=float, help="Angle threshold (degrees)")
+    p.add_argument("--steep-stepdown", type=float)
+    p.add_argument("--shallow-stepover", type=float)
+    p.set_defaults(func=cmd_steep_shallow)
+
+    # Horizontal
+    p = sub.add_parser("horizontal", help="Horizontal finishing (flat areas)")
+    _add_common_args(p)
+    p.set_defaults(func=cmd_horizontal)
+
+    # Radial
+    p = sub.add_parser("radial", help="Radial finishing")
+    _add_common_args(p)
+    p.add_argument("--center", help="Center point x,y in mm")
+    p.set_defaults(func=cmd_radial)
+
+    # Spiral
+    p = sub.add_parser("spiral", help="Spiral finishing")
+    _add_common_args(p)
+    p.set_defaults(func=cmd_spiral)
+
+    # Morphed Spiral [Extension]
+    p = sub.add_parser("morphed-spiral", help="Morphed spiral finishing [Extension]")
+    _add_common_args(p)
+    p.set_defaults(func=cmd_morphed_spiral)
+
+    # Flow [Extension]
+    p = sub.add_parser("flow", help="Flow finishing (follow UV curves) [Extension]")
+    _add_common_args(p)
+    p.set_defaults(func=cmd_flow)
+
+    # Operation management
+    p = sub.add_parser("edit", help="Edit operation parameters")
+    p.add_argument("--operation", required=True)
+    p.add_argument("--new-name")
+    p.add_argument("--stock-to-leave", type=float)
+    p.add_argument("--stepover", type=float)
+    p.add_argument("--stepdown", type=float)
+    p.add_argument("--tolerance", type=float)
+    p.add_argument("--params", nargs="*", help="Raw params: key=value")
+    p.set_defaults(func=cmd_edit)
+
+    p = sub.add_parser("read-params", help="Read operation parameter values")
+    p.add_argument("--operation", required=True)
+    p.add_argument("--params", nargs="+", required=True, help="Parameter names to read")
+    p.set_defaults(func=cmd_read_params)
+
+    p = sub.add_parser("duplicate", help="Duplicate an operation with all settings")
+    p.add_argument("--operation", required=True)
+    p.add_argument("--new-name")
+    p.set_defaults(func=cmd_duplicate)
+
+    p = sub.add_parser("suppress", help="Suppress an operation")
+    p.add_argument("--operation", required=True)
+    p.set_defaults(func=cmd_suppress)
+
+    p = sub.add_parser("unsuppress", help="Unsuppress an operation")
+    p.add_argument("--operation", required=True)
+    p.set_defaults(func=cmd_unsuppress)
+
+    p = sub.add_parser("delete", help="Delete an operation")
+    p.add_argument("--operation", required=True)
+    p.set_defaults(func=cmd_delete)
+
+    return parser
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()
